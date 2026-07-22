@@ -1,0 +1,8 @@
+node_modules/
+npm-debug.log
+cache_backup.bin
+proxy-api-stats.db
+.env
+.pm2/
+coverage/
+.DS_Store
