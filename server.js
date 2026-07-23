@@ -7,13 +7,21 @@ const util = require('util')
 const fs = require('fs')
 const brotliCompress = util.promisify(zlib.brotliCompress)
 
-const cache = new LRUCache({
-  maxSize: 4 * 1024 * 1024 * 1024, // 4GB limit
+const movesetCache = new LRUCache({
+  maxSize: 3 * 1024 * 1024 * 1024, // 3GB limit
   sizeCalculation: (value, key) => {
     return value.body ? value.body.length + key.length + 1024 : 1024;
   },
   allowStale: false,
-})
+});
+
+const dbCache = new LRUCache({
+  maxSize: 1 * 1024 * 1024 * 1024, // 1GB limit
+  sizeCalculation: (value, key) => {
+    return Buffer.byteLength(JSON.stringify(value)) + key.length + 1024;
+  },
+  allowStale: false,
+});
 
 let totalInboundBytes = 0;
 let totalOutboundBytes = 0;
@@ -48,7 +56,7 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 fastify.register(cors, {
-  origin: ['https://smogonstats.eu.cc', 'https://www.smogonstats.eu.cc', 'http://localhost:5173']
+  origin: '*'
 })
 
 fastify.register(compress, {
@@ -79,73 +87,290 @@ fastify.addHook('onSend', (request, reply, payload, done) => {
   done(null, payload);
 })
 
-fastify.post('/_internal/backup', async (req, reply) => {
-  if (req.ip !== '127.0.0.1') return reply.status(403).send({error: 'Forbidden'});
+const { Client } = require('pg');
+
+async function restoreCacheFromPg() {
+  const client = new Client({ database: 'smogon-stats-backup', host: '/var/run/postgresql', user: 'ubuntu' });
   try {
-    const fd = fs.openSync('cache_backup.bin', 'w');
+    await client.connect();
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS proxy_cache (
+        url TEXT PRIMARY KEY,
+        status_code INTEGER,
+        headers JSONB,
+        body BYTEA
+      );
+    `);
+    
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS db_cache (
+        cache_key TEXT PRIMARY KEY,
+        body BYTEA
+      );
+    `);
+    
+    console.time("restore_cache");
+    console.log("Restoring cache from PostgreSQL...");
+    const res = await client.query('SELECT url, status_code, headers, body FROM proxy_cache');
     let count = 0;
-    for (const [url, data] of cache.entries()) {
-      const urlBuf = Buffer.from(url);
-      const headersBuf = Buffer.from(JSON.stringify(data.headers));
-      
-      const meta = Buffer.alloc(14);
-      meta.writeUInt32LE(urlBuf.length, 0);
-      meta.writeUInt16LE(data.statusCode, 4);
-      meta.writeUInt32LE(headersBuf.length, 6);
-      meta.writeUInt32LE(data.body.length, 10);
-      
-      fs.writeSync(fd, meta);
-      fs.writeSync(fd, urlBuf);
-      fs.writeSync(fd, headersBuf);
-      fs.writeSync(fd, data.body);
+    for (const row of res.rows) {
+      movesetCache.set(row.url, {
+        statusCode: row.status_code,
+        headers: row.headers,
+        body: row.body
+      });
       count++;
     }
-    fs.closeSync(fd);
-    return { success: true, count };
+    console.log(`Successfully restored ${count} moveset items from PostgreSQL backup.`);
+    
+    const dbRes = await client.query('SELECT cache_key, body FROM db_cache');
+    let dbCount = 0;
+    for (const row of dbRes.rows) {
+      dbCache.set(row.cache_key, row.body);
+      dbCount++;
+    }
+    console.log(`Successfully restored ${dbCount} DB items from PostgreSQL backup.`);
+    console.timeEnd("restore_cache");
   } catch (err) {
-    req.log.error(err);
-    return reply.status(500).send({ error: err.message });
+    console.error("Failed to restore cache from PG:", err.message);
+  } finally {
+    await client.end().catch(()=>{});
   }
+}
+
+async function backupCacheToPg() {
+  const client = new Client({ database: 'smogon-stats-backup', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    await client.query('BEGIN');
+    await client.query('TRUNCATE TABLE proxy_cache');
+    await client.query('TRUNCATE TABLE db_cache');
+    
+    const count = movesetCache.size;
+    if (count > 0) {
+      const urlsArr = [];
+      const statusesArr = [];
+      const headersArr = [];
+      const bodiesArr = [];
+      
+      for (const [url, data] of movesetCache.entries()) {
+        urlsArr.push(url);
+        statusesArr.push(data.statusCode);
+        headersArr.push(data.headers);
+        bodiesArr.push(data.body);
+      }
+      
+      const insertQuery = `
+        INSERT INTO proxy_cache (url, status_code, headers, body) 
+        SELECT * FROM UNNEST($1::text[], $2::integer[], $3::jsonb[], $4::bytea[])
+      `;
+      
+      await client.query(insertQuery, [urlsArr, statusesArr, headersArr, bodiesArr]);
+    }
+    
+    const dbCount = dbCache.size;
+    if (dbCount > 0) {
+      const keysArr = [];
+      const dbBodiesArr = [];
+      
+      for (const [key, body] of dbCache.entries()) {
+        keysArr.push(key);
+        dbBodiesArr.push(body);
+      }
+      
+      const insertDbQuery = `
+        INSERT INTO db_cache (cache_key, body) 
+        SELECT * FROM UNNEST($1::text[], $2::bytea[])
+      `;
+      
+      await client.query(insertDbQuery, [keysArr, dbBodiesArr]);
+    }
+    
+    await client.query('COMMIT');
+    console.log(`Backed up ${count} moveset items and ${dbCount} DB items to PostgreSQL.`);
+  } catch (err) {
+    console.error("Failed to backup cache to PG:", err.message);
+    await client.query('ROLLBACK').catch(()=>{});
+  } finally {
+    await client.end().catch(()=>{});
+  }
+}
+
+// Automatically backup cache every 7 days to preserve SSD lifespan
+setInterval(backupCacheToPg, 7 * 24 * 60 * 60 * 1000);
+
+fastify.post('/_internal/backup', async (req, reply) => {
+  if (req.ip !== '127.0.0.1') return reply.status(403).send({error: 'Forbidden'});
+  await backupCacheToPg();
+  return { success: true, message: 'Manual backup complete' };
 });
 
 fastify.post('/_internal/restore', async (req, reply) => {
   if (req.ip !== '127.0.0.1') return reply.status(403).send({error: 'Forbidden'});
+  await restoreCacheFromPg();
+  return { success: true, message: 'Manual restore complete' };
+});
+
+
+fastify.get('/api/months', async (req, reply) => {
+  const cacheKey = 'months_list';
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=3600, s-maxage=3600');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
   try {
-    if (!fs.existsSync('cache_backup.bin')) {
-      return reply.status(404).send({ error: 'Backup file not found' });
-    }
-    const fd = fs.openSync('cache_backup.bin', 'r');
-    let count = 0;
-    const meta = Buffer.alloc(14);
-    while (true) {
-      const bytesRead = fs.readSync(fd, meta, 0, 14, null);
-      if (bytesRead === 0) break;
-      
-      const urlLen = meta.readUInt32LE(0);
-      const statusCode = meta.readUInt16LE(4);
-      const headersLen = meta.readUInt32LE(6);
-      const bodyLen = meta.readUInt32LE(10);
-      
-      const dataBuf = Buffer.alloc(urlLen + headersLen + bodyLen);
-      fs.readSync(fd, dataBuf, 0, dataBuf.length, null);
-      
-      let offset = 0;
-      const url = dataBuf.toString('utf8', offset, offset + urlLen);
-      offset += urlLen;
-      
-      const headers = JSON.parse(dataBuf.toString('utf8', offset, offset + headersLen));
-      offset += headersLen;
-      
-      const body = Buffer.from(dataBuf.subarray(offset, offset + bodyLen));
-      
-      cache.set(url, { statusCode, headers, body });
-      count++;
-    }
-    fs.closeSync(fd);
-    return { success: true, count };
+    await client.connect();
+    const result = await client.query('SELECT DISTINCT month FROM usage_stats ORDER BY month DESC');
+    const data = result.rows.map(row => row.month);
+    await client.end();
+    
+    const compressed = await brotliCompress(Buffer.from(JSON.stringify(data)), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT }
+    });
+    dbCache.set(cacheKey, compressed);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=3600, s-maxage=3600');
+    return reply.send(compressed);
   } catch (err) {
     req.log.error(err);
-    return reply.status(500).send({ error: err.message });
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
+  }
+});
+
+fastify.get('/api/formats', async (req, reply) => {
+  const { month } = req.query;
+  if (!month) return reply.status(400).send({ error: 'Missing parameters' });
+  
+  const cacheKey = `formats_${month}`;
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    const result = await client.query('SELECT DISTINCT format, rating FROM usage_stats WHERE month = $1', [month]);
+    
+    const formatsMap = {};
+    for (const row of result.rows) {
+      if (!formatsMap[row.format]) formatsMap[row.format] = [];
+      formatsMap[row.format].push(row.rating);
+    }
+    
+    // Sort and keep top 2 ratings like original api.js
+    const data = {};
+    Object.keys(formatsMap).sort().forEach(format => {
+      data[format] = formatsMap[format]
+        .sort((a, b) => Number(a) - Number(b))
+        .slice(-2);
+    });
+    
+    await client.end();
+    
+    const compressed = await brotliCompress(Buffer.from(JSON.stringify(data)), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT }
+    });
+    dbCache.set(cacheKey, compressed);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(compressed);
+  } catch (err) {
+    req.log.error(err);
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
+  }
+});
+
+fastify.get('/api/viability', async (req, reply) => {
+  const { month, format, rating } = req.query;
+  if (!month || !format || !rating) {
+    return reply.status(400).send({ error: 'Missing parameters' });
+  }
+  
+  const cacheKey = `viability_${month}_${format}_${rating}`;
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    const result = await client.query('SELECT pokemon, viability FROM viability_stats WHERE month = $1 AND format = $2 AND rating = $3', [month, format, rating]);
+    const data = {};
+    for (const row of result.rows) {
+      data[row.pokemon] = row.viability;
+    }
+    await client.end();
+    
+    const compressed = await brotliCompress(Buffer.from(JSON.stringify(data)), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT }
+    });
+    dbCache.set(cacheKey, compressed);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(compressed);
+  } catch (err) {
+    req.log.error(err);
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
+  }
+});
+
+fastify.get('/api/usage', async (req, reply) => {
+  const { month, format, rating } = req.query;
+  if (!month || !format || !rating) {
+    return reply.status(400).send({ error: 'Missing parameters' });
+  }
+  
+  const cacheKey = `usage_${month}_${format}_${rating}`;
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    const result = await client.query('SELECT pokemon, usage_percent FROM usage_stats WHERE month = $1 AND format = $2 AND rating = $3 ORDER BY usage_percent DESC', [month, format, rating]);
+    const data = [];
+    let rank = 1;
+    for (const row of result.rows) {
+      data.push({ rank: rank++, pokemon: row.pokemon, usagePercent: row.usage_percent + '%' });
+    }
+    await client.end();
+    
+    const compressed = await brotliCompress(Buffer.from(JSON.stringify(data)), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT }
+    });
+    dbCache.set(cacheKey, compressed);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(compressed);
+  } catch (err) {
+    req.log.error(err);
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
   }
 });
 
@@ -156,7 +381,8 @@ fastify.get('/', async (req, reply) => {
     return reply.send({
       inboundBytes: totalInboundBytes,
       outboundBytes: totalOutboundBytes,
-      cacheItems: cache.size
+      movesetCacheItems: movesetCache.size,
+      dbCacheItems: dbCache.size
     });
   }
 
@@ -174,7 +400,7 @@ fastify.get('/', async (req, reply) => {
     return reply.status(403).send({ error: 'Access denied: This proxy only works in a browser' })
   }
 
-  const cached = cache.get(targetUrl)
+  const cached = movesetCache.get(targetUrl)
   if (cached) {
     req.log.info(`Cache hit for ${targetUrl}`)
     
@@ -222,7 +448,7 @@ fastify.get('/', async (req, reply) => {
       
       const compressedBuffer = await brotliCompress(buffer, {
         params: { 
-          [zlib.constants.BROTLI_PARAM_QUALITY]: 5,
+          [zlib.constants.BROTLI_PARAM_QUALITY]: 6,
           [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
           [zlib.constants.BROTLI_PARAM_LGWIN]: 24
         }
@@ -230,8 +456,8 @@ fastify.get('/', async (req, reply) => {
       
       savedHeaders['content-encoding'] = 'br';
       
-      if (!isDirectory) {
-        cache.set(targetUrl, {
+      if (!isDirectory && targetUrl.includes('/moveset/')) {
+        movesetCache.set(targetUrl, {
           statusCode,
           headers: savedHeaders,
           body: compressedBuffer
@@ -253,6 +479,7 @@ fastify.get('/', async (req, reply) => {
 
 const start = async () => {
   try {
+    restoreCacheFromPg().catch(err => fastify.log.error(err));
     await fastify.listen({ port: 9000, host: '0.0.0.0' })
   } catch (err) {
     fastify.log.error(err)

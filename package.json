@@ -4,7 +4,8 @@
   "description": "A fast, caching reverse proxy built with Fastify to serve Smogon usage stats efficiently.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "populate-viability": "node populate-viability.js"
   },
   "keywords": [],
   "author": "Alliance-Sky <allianceskygit@gmail.com>",
@@ -15,6 +16,7 @@
     "@fastify/cors": "^11.3.0",
     "fastify": "^5.10.0",
     "lru-cache": "^11.5.2",
+    "pg": "^8.22.0",
     "pm2": "^7.0.3",
     "undici": "^8.8.0"
   }
