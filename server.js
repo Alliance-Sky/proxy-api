@@ -16,7 +16,7 @@ const movesetCache = new LRUCache({
 });
 
 const dbCache = new LRUCache({
-  maxSize: 1 * 1024 * 1024 * 1024, // 1GB limit
+  maxSize: 1.5 * 1024 * 1024 * 1024, // 1.5GB limit
   sizeCalculation: (value, key) => {
     return Buffer.byteLength(JSON.stringify(value)) + key.length + 1024;
   },
@@ -54,6 +54,20 @@ setInterval(() => {
     });
   }
 }, 10 * 60 * 1000);
+
+const rateLimit = require('@fastify/rate-limit')
+
+fastify.register(rateLimit, {
+  max: 200,
+  timeWindow: '1 minute',
+  allowList: ['127.0.0.1', 'localhost'],
+  keyGenerator: (req) => req.headers['x-forwarded-for'] || req.ip,
+  errorResponseBuilder: (req, context) => ({
+    statusCode: 429,
+    error: 'Too Many Requests',
+    message: 'Rate limit exceeded (max 200 req/min). Bulk automated scraping is disabled.'
+  })
+})
 
 fastify.register(cors, {
   origin: '*'
@@ -367,6 +381,117 @@ fastify.get('/api/usage', async (req, reply) => {
     reply.header('content-encoding', 'br');
     reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
     return reply.send(compressed);
+  } catch (err) {
+    req.log.error(err);
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
+  }
+});
+
+fastify.get('/api/leads', async (req, reply) => {
+  const { month, format, rating } = req.query;
+  if (!month || !format || !rating) {
+    return reply.status(400).send({ error: 'Missing parameters' });
+  }
+  
+  const cacheKey = `leads_${month}_${format}_${rating}`;
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    const result = await client.query('SELECT pokemon, lead_percent FROM leads_stats WHERE month = $1 AND format = $2 AND rating = $3 ORDER BY lead_percent DESC', [month, format, rating]);
+    const data = [];
+    let rank = 1;
+    for (const row of result.rows) {
+      data.push({ rank: rank++, pokemon: row.pokemon, leadPercent: row.lead_percent + '%' });
+    }
+    await client.end();
+    
+    const compressed = await brotliCompress(Buffer.from(JSON.stringify(data)), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT }
+    });
+    dbCache.set(cacheKey, compressed);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(compressed);
+  } catch (err) {
+    req.log.error(err);
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
+  }
+});
+
+fastify.get('/api/metagame', async (req, reply) => {
+  const { month, format, rating } = req.query;
+  if (!month || !format || !rating) {
+    return reply.status(400).send({ error: 'Missing parameters' });
+  }
+  
+  const cacheKey = `metagame_${month}_${format}_${rating}`;
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    const result = await client.query('SELECT stalliness, playstyles FROM metagame_stats WHERE month = $1 AND format = $2 AND rating = $3', [month, format, rating]);
+    const data = result.rows.length > 0 ? { stalliness: result.rows[0].stalliness, playstyles: result.rows[0].playstyles } : { stalliness: 0, playstyles: {} };
+    await client.end();
+    
+    const compressed = await brotliCompress(Buffer.from(JSON.stringify(data)), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT }
+    });
+    dbCache.set(cacheKey, compressed);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-encoding', 'br');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(compressed);
+  } catch (err) {
+    req.log.error(err);
+    await client.end().catch(()=>{});
+    return reply.status(500).send({ error: 'Database error' });
+  }
+});
+
+fastify.get('/api/format-stats', async (req, reply) => {
+  const { month, format, rating } = req.query;
+  if (!month || !format || !rating) {
+    return reply.status(400).send({ error: 'Missing parameters' });
+  }
+  
+  const cacheKey = `format_stats_${month}_${format}_${rating}`;
+  if (dbCache.has(cacheKey)) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(dbCache.get(cacheKey));
+  }
+
+  const client = new Client({ database: 'smogon_stats', host: '/var/run/postgresql', user: 'ubuntu' });
+  try {
+    await client.connect();
+    const result = await client.query('SELECT total_battles FROM format_stats WHERE month = $1 AND format = $2 AND rating = $3', [month, format, rating]);
+    const data = { totalBattles: result.rows.length > 0 ? result.rows[0].total_battles : 0 };
+    await client.end();
+    
+    const buffer = Buffer.from(JSON.stringify(data));
+    dbCache.set(cacheKey, buffer);
+    
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('cache-control', 'public, max-age=2592000, s-maxage=2592000, immutable');
+    return reply.send(buffer);
   } catch (err) {
     req.log.error(err);
     await client.end().catch(()=>{});
