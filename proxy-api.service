@@ -1,0 +1,17 @@
+[Unit]
+Description=Smogon Proxy API (Go)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/proxy-api
+ExecStartPre=/snap/bin/go build -o proxy-api-bin ./cmd/proxy-api
+ExecStart=/home/ubuntu/proxy-api/proxy-api-bin
+Restart=always
+RestartSec=5
+Environment=PORT=9000
+Environment=DATABASE_URL=postgres://ubuntu@/smogon_stats?host=/var/run/postgresql
+
+[Install]
+WantedBy=multi-user.target

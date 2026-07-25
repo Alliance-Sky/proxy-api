@@ -1,0 +1,17 @@
+# Example crontab for Smogon Go population scripts
+# Run `crontab -e` and paste these lines to automate fetching new stats
+
+# Usage stats: run once a day at 2:00 AM
+0 2 * * * /home/ubuntu/proxy-api/populate-usage-stats-bin >> /home/ubuntu/proxy-api/logs/usage.log 2>&1
+
+# Format stats: run once a day at 2:30 AM
+30 2 * * * /home/ubuntu/proxy-api/populate-format-stats-bin >> /home/ubuntu/proxy-api/logs/format.log 2>&1
+
+# Leads stats: run once a day at 3:00 AM
+0 3 * * * /home/ubuntu/proxy-api/populate-leads-bin >> /home/ubuntu/proxy-api/logs/leads.log 2>&1
+
+# Metagame stats: run once a day at 3:30 AM
+30 3 * * * /home/ubuntu/proxy-api/populate-metagame-bin >> /home/ubuntu/proxy-api/logs/metagame.log 2>&1
+
+# Viability stats: run once a day at 4:00 AM
+0 4 * * * /home/ubuntu/proxy-api/populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1

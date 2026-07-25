@@ -1,8 +1,17 @@
-node_modules/
-npm-debug.log
-cache_backup.bin
+# Compiled Go Binaries
+*-bin
+
+# Cache and Database Files
 proxy-api-stats.db
+cache-backup.jsonl*
+cache_backup.bin
+
+# Environment Files
 .env
-.pm2/
-coverage/
+
+# Logs
+*.log
+logs/
+
+# OS generated files
 .DS_Store
