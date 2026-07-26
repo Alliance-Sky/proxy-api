@@ -1,11 +1,13 @@
 package api
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
 	"github.com/Alliance-Sky/proxy-api/internal/db"
@@ -27,12 +29,16 @@ func NewHandler(cache *cache.Service, db *db.Service) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/months", h.GetMonths)
 	r.Get("/api/formats", h.GetFormats)
+	r.Get("/api/v2/formats", h.GetFormats)
 	r.Get("/api/viability", h.GetViability)
 	r.Get("/api/usage", h.GetUsage)
 	r.Get("/api/trend", h.GetTrend)
 	r.Get("/api/leads", h.GetLeads)
 	r.Get("/api/metagame", h.GetMetagame)
 	r.Get("/api/format-stats", h.GetFormatStats)
+	r.Get("/api/v2/stats", h.GetAggregatedStats)
+	r.Get("/api/v3/stats", h.GetAggregatedStatsTuple)
+	r.Get("/api/v3/init", h.GetInit)
 	r.Get("/", h.GetProxy)
 
 	r.Post("/_internal/restore", h.RestoreCache)
@@ -69,17 +75,39 @@ func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"success":true,"message":"Manual backup complete"}`))
 }
 
-func (h *Handler) sendCached(w http.ResponseWriter, data []byte, cacheControl string) {
+func (h *Handler) sendCached(w http.ResponseWriter, r *http.Request, data []byte, cacheControl string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Content-Encoding", "br")
 	w.Header().Set("Cache-Control", cacheControl)
-	w.Write(data)
+
+	acceptEncoding := r.Header.Get("Accept-Encoding")
+
+	if strings.Contains(acceptEncoding, "br") {
+		w.Header().Set("Content-Encoding", "br")
+		w.Write(data)
+		return
+	}
+
+	uncompressed, err := decompressBrotli(data)
+	if err != nil {
+		http.Error(w, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if strings.Contains(acceptEncoding, "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		gz.Write(uncompressed)
+		gz.Close()
+		return
+	}
+
+	w.Write(uncompressed)
 }
 
 func (h *Handler) GetMonths(w http.ResponseWriter, r *http.Request) {
 	cacheKey := "months_list"
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=3600, s-maxage=3600")
+		h.sendCached(w, r, cached, "public, max-age=3600, s-maxage=3600")
 		return
 	}
 
@@ -95,7 +123,7 @@ func (h *Handler) GetMonths(w http.ResponseWriter, r *http.Request) {
 		h.cache.DBCache.Set(cacheKey, compressed)
 	}
 
-	h.sendCached(w, compressed, "public, max-age=3600, s-maxage=3600")
+	h.sendCached(w, r, compressed, "public, max-age=3600, s-maxage=3600")
 }
 
 func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
@@ -105,9 +133,9 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("formats_%s", month)
+	cacheKey := fmt.Sprintf("formats_v2_%s", month)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
 		return
 	}
 
@@ -122,6 +150,12 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 		formatsMap[f.Format] = append(formatsMap[f.Format], f.Rating)
 	}
 
+	type FormatItem struct {
+		Format  string   `json:"format"`
+		Ratings []string `json:"ratings"`
+	}
+	var formatItems []FormatItem
+
 	for format, ratings := range formatsMap {
 		sort.Slice(ratings, func(i, j int) bool {
 			ni, _ := strconv.Atoi(ratings[i])
@@ -130,15 +164,65 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 		})
 
 		if len(ratings) > 2 {
-			formatsMap[format] = ratings[len(ratings)-2:]
+			ratings = ratings[len(ratings)-2:]
 		}
+		formatItems = append(formatItems, FormatItem{
+			Format:  format,
+			Ratings: ratings,
+		})
 	}
 
-	jsonData, _ := json.Marshal(formatsMap)
+	tierOrder := []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
+	getTierRank := func(f string) int {
+		clean := f
+		if len(f) > 4 && f[:3] == "gen" {
+			i := 3
+			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+				i++
+			}
+			clean = f[i:]
+		}
+		for idx, t := range tierOrder {
+			if t == clean {
+				return idx
+			}
+		}
+		return 999
+	}
+	getGenNum := func(f string) int {
+		if len(f) > 3 && f[:3] == "gen" {
+			i := 3
+			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+				i++
+			}
+			if gen, err := strconv.Atoi(f[3:i]); err == nil {
+				return gen
+			}
+		}
+		return 0
+	}
+
+	sort.Slice(formatItems, func(i, j int) bool {
+		a := formatItems[i].Format
+		b := formatItems[j].Format
+		genA := getGenNum(a)
+		genB := getGenNum(b)
+		if genA != genB {
+			return genA > genB
+		}
+		rankA := getTierRank(a)
+		rankB := getTierRank(b)
+		if rankA != rankB {
+			return rankA < rankB
+		}
+		return a < b
+	})
+
+	jsonData, _ := json.Marshal(formatItems)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }
 
 func (h *Handler) GetViability(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +237,7 @@ func (h *Handler) GetViability(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("viability_%s_%s_%s", month, format, rating)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
 		return
 	}
 
@@ -172,7 +256,7 @@ func (h *Handler) GetViability(w http.ResponseWriter, r *http.Request) {
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }
 
 func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +271,7 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("usage_%s_%s_%s", month, format, rating)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
 		return
 	}
 
@@ -216,5 +300,272 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+}
+
+func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
+	month := r.URL.Query().Get("month")
+	format := r.URL.Query().Get("format")
+	rating := r.URL.Query().Get("rating")
+
+	if month == "" || format == "" || rating == "" {
+		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		return
+	}
+
+	cacheKey := fmt.Sprintf("aggregated_stats_%s_%s_%s", month, format, rating)
+	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		return
+	}
+
+	usage, err := h.db.GetUsage(r.Context(), month, format, rating)
+	if err != nil {
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	viability, _ := h.db.GetViability(r.Context(), month, format, rating)
+	leads, _ := h.db.GetLeads(r.Context(), month, format, rating)
+
+	viabilityMap := make(map[string]json.RawMessage)
+	for _, v := range viability {
+		viabilityMap[v.Pokemon] = v.Viability
+	}
+
+	leadsMap := make(map[string]string)
+	for _, l := range leads {
+		leadsMap[l.Pokemon] = fmt.Sprintf("%.5f%%", l.LeadPercent)
+	}
+
+	type AggregatedStatsResponse struct {
+		Rank         int             `json:"rank"`
+		Pokemon      string          `json:"pokemon"`
+		UsagePercent string          `json:"usagePercent"`
+		LeadPercent  string          `json:"leadPercent"`
+		Viability    json.RawMessage `json:"viability"`
+	}
+
+	dataAgg := make([]AggregatedStatsResponse, 0, len(usage))
+	for i, u := range usage {
+		leadPct, exists := leadsMap[u.Pokemon]
+		if !exists {
+			leadPct = "0.00000%"
+		}
+		
+		viab := viabilityMap[u.Pokemon]
+
+		dataAgg = append(dataAgg, AggregatedStatsResponse{
+			Rank:         i + 1,
+			Pokemon:      u.Pokemon,
+			UsagePercent: fmt.Sprintf("%.5f%%", u.UsagePercent),
+			LeadPercent:  leadPct,
+			Viability:    viab,
+		})
+	}
+
+	jsonDataAgg, _ := json.Marshal(dataAgg)
+	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
+	h.cache.DBCache.Set(cacheKey, compressedAgg)
+
+	h.sendCached(w, r, compressedAgg, "public, max-age=2592000, s-maxage=2592000, immutable")
+}
+
+func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request) {
+	month := r.URL.Query().Get("month")
+	format := r.URL.Query().Get("format")
+	rating := r.URL.Query().Get("rating")
+
+	if month == "" || format == "" || rating == "" {
+		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		return
+	}
+
+	cacheKey := fmt.Sprintf("aggregated_stats_v3_%s_%s_%s", month, format, rating)
+	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		return
+	}
+
+	usage, err := h.db.GetUsage(r.Context(), month, format, rating)
+	if err != nil {
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	viability, _ := h.db.GetViability(r.Context(), month, format, rating)
+	leads, _ := h.db.GetLeads(r.Context(), month, format, rating)
+
+	viabilityMap := make(map[string]json.RawMessage)
+	for _, v := range viability {
+		viabilityMap[v.Pokemon] = v.Viability
+	}
+
+	leadsMap := make(map[string]string)
+	for _, l := range leads {
+		leadsMap[l.Pokemon] = fmt.Sprintf("%.5f%%", l.LeadPercent)
+	}
+
+	dataAgg := make([][]interface{}, 0, len(usage))
+	for i, u := range usage {
+		leadPct, exists := leadsMap[u.Pokemon]
+		if !exists {
+			leadPct = "0.00000%"
+		}
+		
+		viab := viabilityMap[u.Pokemon]
+
+		dataAgg = append(dataAgg, []interface{}{
+			i + 1,
+			u.Pokemon,
+			fmt.Sprintf("%.5f%%", u.UsagePercent),
+			leadPct,
+			viab,
+		})
+	}
+
+	jsonDataAgg, _ := json.Marshal(dataAgg)
+	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
+	h.cache.DBCache.Set(cacheKey, compressedAgg)
+
+	h.sendCached(w, r, compressedAgg, "public, max-age=2592000, s-maxage=2592000, immutable")
+}
+
+func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
+	cacheKey := "init_v3"
+	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
+		h.sendCached(w, r, cached, "public, max-age=3600, s-maxage=3600")
+		return
+	}
+
+	months, err := h.db.GetMonths(r.Context())
+	if err != nil || len(months) == 0 {
+		http.Error(w, `{"error":"Database error or no months"}`, http.StatusInternalServerError)
+		return
+	}
+	latestMonth := months[0]
+
+	formatsData, _ := h.db.GetFormatsByMonth(r.Context(), latestMonth)
+	formatsMap := make(map[string][]string)
+	for _, f := range formatsData {
+		formatsMap[f.Format] = append(formatsMap[f.Format], f.Rating)
+	}
+	
+	type FormatItem struct {
+		Format  string   `json:"format"`
+		Ratings []string `json:"ratings"`
+	}
+	var formatItems []FormatItem
+	for format, ratings := range formatsMap {
+		sort.Slice(ratings, func(i, j int) bool {
+			ni, _ := strconv.Atoi(ratings[i])
+			nj, _ := strconv.Atoi(ratings[j])
+			return ni < nj
+		})
+		if len(ratings) > 2 {
+			ratings = ratings[len(ratings)-2:]
+		}
+		formatItems = append(formatItems, FormatItem{
+			Format:  format,
+			Ratings: ratings,
+		})
+	}
+
+	tierOrder := []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
+	getTierRank := func(f string) int {
+		clean := f
+		if len(f) > 4 && f[:3] == "gen" {
+			i := 3
+			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+				i++
+			}
+			clean = f[i:]
+		}
+		for idx, t := range tierOrder {
+			if t == clean {
+				return idx
+			}
+		}
+		return 999
+	}
+	getGenNum := func(f string) int {
+		if len(f) > 3 && f[:3] == "gen" {
+			i := 3
+			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+				i++
+			}
+			if gen, err := strconv.Atoi(f[3:i]); err == nil {
+				return gen
+			}
+		}
+		return 0
+	}
+	sort.Slice(formatItems, func(i, j int) bool {
+		a := formatItems[i].Format
+		b := formatItems[j].Format
+		genA := getGenNum(a)
+		genB := getGenNum(b)
+		if genA != genB {
+			return genA > genB
+		}
+		rankA := getTierRank(a)
+		rankB := getTierRank(b)
+		if rankA != rankB {
+			return rankA < rankB
+		}
+		return a < b
+	})
+
+	var defaultFormat string
+	var defaultRating string
+	if len(formatItems) > 0 {
+		defaultFormat = formatItems[0].Format
+		defaultRating = formatItems[0].Ratings[0]
+	}
+
+	var dataAgg [][]interface{}
+	if defaultFormat != "" && defaultRating != "" {
+		usage, _ := h.db.GetUsage(r.Context(), latestMonth, defaultFormat, defaultRating)
+		viability, _ := h.db.GetViability(r.Context(), latestMonth, defaultFormat, defaultRating)
+		leads, _ := h.db.GetLeads(r.Context(), latestMonth, defaultFormat, defaultRating)
+
+		viabilityMap := make(map[string]json.RawMessage)
+		for _, v := range viability {
+			viabilityMap[v.Pokemon] = v.Viability
+		}
+		leadsMap := make(map[string]string)
+		for _, l := range leads {
+			leadsMap[l.Pokemon] = fmt.Sprintf("%.5f%%", l.LeadPercent)
+		}
+		for i, u := range usage {
+			leadPct, exists := leadsMap[u.Pokemon]
+			if !exists {
+				leadPct = "0.00000%"
+			}
+			dataAgg = append(dataAgg, []interface{}{
+				i + 1,
+				u.Pokemon,
+				fmt.Sprintf("%.5f%%", u.UsagePercent),
+				leadPct,
+				viabilityMap[u.Pokemon],
+			})
+		}
+	}
+
+	monthStrs := months
+
+	resp := map[string]interface{}{
+		"months":        monthStrs,
+		"formats":       formatItems,
+		"defaultMonth":  latestMonth,
+		"defaultFormat": defaultFormat,
+		"defaultRating": defaultRating,
+		"stats":         dataAgg,
+	}
+
+	jsonDataAgg, _ := json.Marshal(resp)
+	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
+	h.cache.DBCache.Set(cacheKey, compressedAgg)
+
+	h.sendCached(w, r, compressedAgg, "public, max-age=3600, s-maxage=3600")
 }

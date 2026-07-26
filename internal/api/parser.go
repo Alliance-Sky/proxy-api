@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
 	"strconv"
@@ -24,8 +25,8 @@ type PokemonData struct {
 var counterRegex = regexp.MustCompile(`^(.+?)\s+([0-9.]+)\s*\(`)
 
 func ParseMoveset(text []byte) ([]byte, error) {
-	str := strings.ReplaceAll(string(text), "\r\n", "\n")
-	lines := strings.Split(str, "\n")
+	text = bytes.ReplaceAll(text, []byte("\r\n"), []byte("\n"))
+	lines := bytes.Split(text, []byte("\n"))
 	data := make(map[string]*PokemonData)
 
 	var currentPokemon string
@@ -34,18 +35,18 @@ func ParseMoveset(text []byte) ([]byte, error) {
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
-		trimmedLine := strings.TrimSpace(line)
+		trimmedLine := bytes.TrimSpace(line)
 
-		if strings.HasPrefix(trimmedLine, "+----------------------------------------+") {
+		if bytes.HasPrefix(trimmedLine, []byte("+----------------------------------------+")) {
 			if i+3 < len(lines) &&
-				strings.HasPrefix(strings.TrimSpace(lines[i+2]), "+----------------------------------------+") &&
-				strings.HasPrefix(strings.TrimSpace(lines[i+3]), "| Raw count:") {
+				bytes.HasPrefix(bytes.TrimSpace(lines[i+2]), []byte("+----------------------------------------+")) &&
+				bytes.HasPrefix(bytes.TrimSpace(lines[i+3]), []byte("| Raw count:")) {
 
-				nameLine := strings.TrimSpace(lines[i+1])
+				nameLine := bytes.TrimSpace(lines[i+1])
 				if len(nameLine) > 1 {
-					idx := strings.Index(nameLine[1:], "|")
+					idx := bytes.Index(nameLine[1:], []byte("|"))
 					if idx != -1 {
-						currentPokemon = strings.TrimSpace(nameLine[1 : 1+idx])
+						currentPokemon = string(bytes.TrimSpace(nameLine[1 : 1+idx]))
 						pokemonData = &PokemonData{
 							Abilities: []StatEntry{},
 							Items:     []StatEntry{},
@@ -67,40 +68,39 @@ func ParseMoveset(text []byte) ([]byte, error) {
 			continue
 		}
 
-		if strings.HasPrefix(trimmedLine, "+----------------------------------------+") {
+		if bytes.HasPrefix(trimmedLine, []byte("+----------------------------------------+")) {
 			currentSection = ""
 			continue
 		}
 
-		if strings.HasPrefix(trimmedLine, "| Abilities") {
+		if bytes.HasPrefix(trimmedLine, []byte("| Abilities")) {
 			currentSection = "Abilities"
 			continue
 		}
-		if strings.HasPrefix(trimmedLine, "| Items") {
+		if bytes.HasPrefix(trimmedLine, []byte("| Items")) {
 			currentSection = "Items"
 			continue
 		}
-		if strings.HasPrefix(trimmedLine, "| Spreads") {
+		if bytes.HasPrefix(trimmedLine, []byte("| Spreads")) {
 			currentSection = "Spreads"
 			continue
 		}
-		if strings.HasPrefix(trimmedLine, "| Moves") {
+		if bytes.HasPrefix(trimmedLine, []byte("| Moves")) {
 			currentSection = "Moves"
 			continue
 		}
-		if strings.HasPrefix(trimmedLine, "| Teammates") {
+		if bytes.HasPrefix(trimmedLine, []byte("| Teammates")) {
 			currentSection = "Teammates"
 			continue
 		}
-		if strings.HasPrefix(trimmedLine, "| Checks and Counters") {
+		if bytes.HasPrefix(trimmedLine, []byte("| Checks and Counters")) {
 			currentSection = "Counters"
 			continue
 		}
 
 		if currentSection != "" && pokemonData != nil {
-			if strings.HasPrefix(trimmedLine, "| ") {
-				content := trimmedLine[1:]
-				// Remove trailing pipe and spaces
+			if bytes.HasPrefix(trimmedLine, []byte("| ")) {
+				content := string(trimmedLine[1:])
 				content = strings.TrimRight(content, "| \t")
 				content = strings.TrimSpace(content)
 
@@ -123,7 +123,7 @@ func ParseMoveset(text []byte) ([]byte, error) {
 					if lastSpace != -1 {
 						name := strings.TrimSpace(content[:lastSpace])
 						percent := strings.TrimSpace(content[lastSpace+1:])
-						percent = strings.TrimSuffix(percent, "%") // Strip % sign for ParseFloat
+						percent = strings.TrimSuffix(percent, "%")
 						if name != "Other" && name != "Empty" {
 							if p, err := strconv.ParseFloat(percent, 64); err == nil && p > 0 {
 								entry := StatEntry{Name: name, Percent: percent}

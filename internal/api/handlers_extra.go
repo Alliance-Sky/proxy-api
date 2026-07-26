@@ -26,7 +26,7 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("trend_%s_%s_%s_%d", format, rating, pokemon, limit)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=3600, s-maxage=3600")
+		h.sendCached(w, r, cached, "public, max-age=3600, s-maxage=3600")
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=3600, s-maxage=3600")
+	h.sendCached(w, r, compressed, "public, max-age=3600, s-maxage=3600")
 }
 
 func (h *Handler) GetLeads(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func (h *Handler) GetLeads(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("leads_%s_%s_%s", month, format, rating)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
 		return
 	}
 
@@ -123,7 +123,7 @@ func (h *Handler) GetLeads(w http.ResponseWriter, r *http.Request) {
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }
 
 func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +138,7 @@ func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("metagame_%s_%s_%s", month, format, rating)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
 		return
 	}
 
@@ -161,7 +161,7 @@ func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }
 
 func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +176,7 @@ func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("format_stats_%s_%s_%s", month, format, rating)
 	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
+		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
 		return
 	}
 
@@ -194,5 +194,5 @@ func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
-	h.sendCached(w, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
+	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }

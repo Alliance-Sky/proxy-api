@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"io"
 
 	"github.com/andybalholm/brotli"
 )
@@ -26,4 +27,9 @@ func compressBrotliWithLevel(data []byte, level int) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func decompressBrotli(data []byte) ([]byte, error) {
+	reader := brotli.NewReader(bytes.NewReader(data))
+	return io.ReadAll(reader)
 }

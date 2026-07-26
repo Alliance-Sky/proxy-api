@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -40,7 +41,9 @@ func loadStats() {
 	}
 }
 
-func saveStatsLoop(ctx context.Context) {
+func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	
 	var lastInbound, lastOutbound uint64
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
@@ -73,7 +76,9 @@ func saveStatsLoop(ctx context.Context) {
 	}
 }
 
-func saveCacheLoop(ctx context.Context, cacheSvc *cache.Service) {
+func saveCacheLoop(ctx context.Context, cacheSvc *cache.Service, wg *sync.WaitGroup) {
+	defer wg.Done()
+	
 	ticker := time.NewTicker(7 * 24 * time.Hour)
 	defer ticker.Stop()
 
@@ -90,7 +95,9 @@ func saveCacheLoop(ctx context.Context, cacheSvc *cache.Service) {
 	}
 }
 
-func checkNewSmogonStatsLoop(ctx context.Context, cacheSvc *cache.Service) {
+func checkNewSmogonStatsLoop(ctx context.Context, cacheSvc *cache.Service, wg *sync.WaitGroup) {
+	defer wg.Done()
+	
 	ticker := time.NewTicker(12 * time.Hour)
 	defer ticker.Stop()
 
@@ -154,9 +161,10 @@ func main() {
 	loadStats()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var wg sync.WaitGroup
 
-	go saveStatsLoop(ctx)
+	wg.Add(1)
+	go saveStatsLoop(ctx, &wg)
 
 	cacheSvc, err := cache.NewService()
 	if err != nil {
@@ -168,10 +176,13 @@ func main() {
 		slog.Warn("Failed to restore cache", "error", err)
 	}
 
-	go saveCacheLoop(ctx, cacheSvc)
-	go checkNewSmogonStatsLoop(ctx, cacheSvc)
+	wg.Add(1)
+	go saveCacheLoop(ctx, cacheSvc, &wg)
+	
+	wg.Add(1)
+	go checkNewSmogonStatsLoop(ctx, cacheSvc, &wg)
 
-	dsn := "user=ubuntu dbname=smogon_stats host=/var/run/postgresql pool_max_conns=20"
+	dsn := "user=ubuntu dbname=smogon_stats host=/var/run/postgresql"
 	dbSvc, err := db.NewService(dsn)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
@@ -234,13 +245,27 @@ func main() {
 	<-stop
 	slog.Info("Shutting down gracefully...")
 
-	cancel()
-
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
+	}
+
+	cancel()
+
+	slog.Info("Waiting for background tasks (cache backup) to complete...")
+	waitCh := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitCh)
+	}()
+
+	select {
+	case <-waitCh:
+		slog.Info("All background tasks finished cleanly")
+	case <-time.After(45 * time.Second):
+		slog.Warn("Timed out waiting for background tasks")
 	}
 
 	slog.Info("Server stopped cleanly")
