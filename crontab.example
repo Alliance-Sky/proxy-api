@@ -15,3 +15,6 @@
 
 # Viability stats: run once a day at 4:00 AM
 0 4 * * * /home/ubuntu/proxy-api/populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
+
+# Invalidate proxy-api months cache after all scripts finish (4:30 AM)
+30 4 * * * curl -X POST http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1

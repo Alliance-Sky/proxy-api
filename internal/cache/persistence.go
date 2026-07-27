@@ -3,7 +3,7 @@ package cache
 import (
 	"bufio"
 	"encoding/binary"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"errors"
 	"io"
 	"log"
@@ -17,7 +17,7 @@ type MovesetCacheEntry struct {
 }
 
 func (e *MovesetCacheEntry) Marshal() ([]byte, error) {
-	headerBytes, err := json.Marshal(e.Headers)
+	headerBytes, err := json.MarshalNoEscape(e.Headers)
 	if err != nil {
 		return nil, err
 	}

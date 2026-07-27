@@ -2,7 +2,7 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -147,5 +147,5 @@ func ParseMoveset(text []byte) ([]byte, error) {
 		}
 	}
 
-	return json.Marshal(data)
+	return json.MarshalNoEscape(data)
 }

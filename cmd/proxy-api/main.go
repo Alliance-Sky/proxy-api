@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"io"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +51,7 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
 		case <-ctx.Done():
 			currInbound := atomic.LoadUint64(&api.TotalInboundBytes)
 			currOutbound := atomic.LoadUint64(&api.TotalOutboundBytes)
-			data, _ := json.Marshal(map[string]uint64{
+			data, _ := json.MarshalNoEscape(map[string]uint64{
 				"inboundBytes":  currInbound,
 				"outboundBytes": currOutbound,
 			})
@@ -64,7 +62,7 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
 			currOutbound := atomic.LoadUint64(&api.TotalOutboundBytes)
 
 			if currInbound != lastInbound || currOutbound != lastOutbound {
-				data, _ := json.Marshal(map[string]uint64{
+				data, _ := json.MarshalNoEscape(map[string]uint64{
 					"inboundBytes":  currInbound,
 					"outboundBytes": currOutbound,
 				})
@@ -91,62 +89,6 @@ func saveCacheLoop(ctx context.Context, cacheSvc *cache.Service, wg *sync.WaitGr
 		case <-ticker.C:
 			slog.Info("Running scheduled cache backup...")
 			cacheSvc.BackupToFile("cache-backup.jsonl")
-		}
-	}
-}
-
-func checkNewSmogonStatsLoop(ctx context.Context, cacheSvc *cache.Service, wg *sync.WaitGroup) {
-	defer wg.Done()
-	
-	ticker := time.NewTicker(12 * time.Hour)
-	defer ticker.Stop()
-
-	var lastKnownLatestMonth string
-	regex := regexp.MustCompile(`<a href="(\d{4}-\d{2})/?">`)
-
-	check := func() {
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get("https://www.smogon.com/stats/")
-		if err != nil {
-			slog.Error("[Notifier] Error checking for new stats", "error", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return
-		}
-
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return
-		}
-
-		matches := regex.FindAllStringSubmatch(string(bodyBytes), -1)
-		if len(matches) > 0 {
-			latestMonth := matches[len(matches)-1][1]
-
-			if lastKnownLatestMonth == "" {
-				lastKnownLatestMonth = latestMonth
-			} else if latestMonth > lastKnownLatestMonth {
-				slog.Info("[Notifier] New Smogon stats detected!", "previous", lastKnownLatestMonth, "new", latestMonth)
-				lastKnownLatestMonth = latestMonth
-
-				cacheSvc.DBCache.Delete("months_list")
-				cacheSvc.DBCache.Delete("months_list_raw")
-				slog.Info("[Notifier] months_list cache has been invalidated due to new stats.")
-			}
-		}
-	}
-
-	check()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			check()
 		}
 	}
 }
@@ -178,9 +120,6 @@ func main() {
 
 	wg.Add(1)
 	go saveCacheLoop(ctx, cacheSvc, &wg)
-	
-	wg.Add(1)
-	go checkNewSmogonStatsLoop(ctx, cacheSvc, &wg)
 
 	dsn := "user=ubuntu dbname=smogon_stats host=/var/run/postgresql"
 	dbSvc, err := db.NewService(dsn)

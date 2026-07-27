@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -40,7 +40,7 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(cached, &allMonths)
 	} else {
 		allMonths, _ = h.db.GetMonths(r.Context())
-		rawBytes, _ := json.Marshal(allMonths)
+		rawBytes, _ := json.MarshalNoEscape(allMonths)
 		h.cache.DBCache.Set("months_list_raw", rawBytes)
 	}
 
@@ -75,7 +75,7 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonData, _ := json.Marshal(data)
+	jsonData, _ := json.MarshalNoEscape(data)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
@@ -119,7 +119,7 @@ func (h *Handler) GetLeads(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonData, _ := json.Marshal(data)
+	jsonData, _ := json.MarshalNoEscape(data)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
@@ -157,7 +157,7 @@ func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jsonData, _ := json.Marshal(resp)
+	jsonData, _ := json.MarshalNoEscape(resp)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
@@ -190,7 +190,7 @@ func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
 		resp.TotalBattles = totalBattles
 	}
 
-	jsonData, _ := json.Marshal(resp)
+	jsonData, _ := json.MarshalNoEscape(resp)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 

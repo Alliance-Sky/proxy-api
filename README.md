@@ -1,7 +1,7 @@
 # Proxy API for smogonstats.eu.cc
 
 A fast, caching reverse proxy and API backend built in **Go** to serve Smogon usage stats efficiently. 
-Features strict SSRF protections, graceful shutdown, and robust caching (`BigCache`) to minimize bandwidth and database queries. It also includes the necessary data populator scripts to scrape Smogon stats directly into PostgreSQL.
+Features strict SSRF protections, graceful shutdown, and robust caching (`BigCache`) to minimize bandwidth and database queries. The backend operates on the optimized v3 API layer to serve highly condensed JSON payloads (stripping expensive string formatting overhead). It also includes the necessary data populator scripts to scrape Smogon stats directly into PostgreSQL.
 
 ## Requirements
 - Go 1.20+

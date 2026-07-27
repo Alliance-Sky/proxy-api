@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -299,7 +299,7 @@ func main() {
 					parsed := parseMetagame(text)
 
 					if len(parsed.Playstyles) > 0 {
-						playstylesJSON, _ := json.Marshal(parsed.Playstyles)
+						playstylesJSON, _ := json.MarshalNoEscape(parsed.Playstyles)
 
 						mu.Lock()
 						insertMonths = append(insertMonths, month)

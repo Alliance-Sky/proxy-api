@@ -15,3 +15,6 @@ logs/
 
 # OS generated files
 .DS_Store
+
+# Secrets
+cloudflare-hook-id.txt

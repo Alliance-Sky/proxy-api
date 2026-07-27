@@ -1,10 +1,10 @@
 package api
 
 import (
-	"bytes"
-	"compress/gzip"
+
+
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,7 +47,9 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 			"dbCacheCapacity":      h.cache.DBCache.Capacity(),
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(stats)
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		enc.Encode(stats)
 		return
 	}
 
@@ -105,7 +107,7 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 						if parseErr == nil {
 							fullMap := vMap.(map[string]*PokemonData)
 							if pokeData, ok := fullMap[pokemon]; ok {
-								pokeBytes, _ := json.Marshal(pokeData)
+								pokeBytes, _ := json.MarshalNoEscape(pokeData)
 								pokeCompressed, err := compressBrotliFast(pokeBytes)
 								if err == nil {
 									e := cache.MovesetCacheEntry{
@@ -176,9 +178,15 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 
 				if isMoveset && fullParsedJSON != nil {
 					if fullCompressed, err := compressBrotliFast(fullParsedJSON); err == nil {
+						hdrsCopy := make(map[string]string)
+						for k, val := range savedHeaders {
+							hdrsCopy[k] = val
+						}
+						hdrsCopy["Content-Encoding"] = "br"
+
 						e := cache.MovesetCacheEntry{
 							StatusCode: resp.StatusCode,
-							Headers:    savedHeaders,
+							Headers:    hdrsCopy,
 							Body:       fullCompressed,
 						}
 						eBytes, _ := e.Marshal()
@@ -194,7 +202,7 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 					hdrsCopy["Content-Encoding"] = "br"
 					go func(full map[string]*PokemonData, tURL string, status int, hdrs map[string]string) {
 						for pokeName, pData := range full {
-							pBytes, err := json.Marshal(pData)
+							pBytes, err := json.MarshalNoEscape(pData)
 							if err != nil {
 								continue
 							}
@@ -215,7 +223,7 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 
 				if pokemon != "" && fullMap != nil {
 					if pokeData, ok := fullMap[pokemon]; ok {
-						pokeBytes, _ := json.Marshal(pokeData)
+						pokeBytes, _ := json.MarshalNoEscape(pokeData)
 						responseBytes = pokeBytes
 					} else {
 						return nil, fmt.Errorf("pokemon_not_found")
@@ -282,20 +290,9 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 			atomic.AddUint64(&TotalOutboundBytes, uint64(len(entry.Body)))
 		} else {
 			uncompressed, _ := decompressBrotli(entry.Body)
-			if strings.Contains(acceptEncoding, "gzip") {
-				w.Header().Set("Content-Encoding", "gzip")
-				w.WriteHeader(entry.StatusCode)
-				var buf bytes.Buffer
-				gz := gzip.NewWriter(&buf)
-				gz.Write(uncompressed)
-				gz.Close()
-				w.Write(buf.Bytes())
-				atomic.AddUint64(&TotalOutboundBytes, uint64(buf.Len()))
-			} else {
-				w.WriteHeader(entry.StatusCode)
-				w.Write(uncompressed)
-				atomic.AddUint64(&TotalOutboundBytes, uint64(len(uncompressed)))
-			}
+			w.WriteHeader(entry.StatusCode)
+			w.Write(uncompressed)
+			atomic.AddUint64(&TotalOutboundBytes, uint64(len(uncompressed)))
 		}
 	} else {
 		w.WriteHeader(entry.StatusCode)

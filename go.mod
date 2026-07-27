@@ -4,11 +4,12 @@ go 1.26.5
 
 require (
 	github.com/allegro/bigcache/v3 v3.1.0
-	github.com/andybalholm/brotli v1.2.2
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.16.0
+	github.com/goccy/go-json v0.10.6
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/molecule-man/go-brrr v1.0.1
 	golang.org/x/sync v0.17.0
 )
 

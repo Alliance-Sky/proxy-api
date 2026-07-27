@@ -1,8 +1,8 @@
 package api
 
 import (
-	"compress/gzip"
-	"encoding/json"
+
+	"github.com/goccy/go-json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -27,26 +27,26 @@ func NewHandler(cache *cache.Service, db *db.Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
-	r.Get("/api/months", h.GetMonths)
-	r.Get("/api/formats", h.GetFormats)
-	r.Get("/api/v2/formats", h.GetFormats)
-	r.Get("/api/viability", h.GetViability)
-	r.Get("/api/usage", h.GetUsage)
-	r.Get("/api/trend", h.GetTrend)
-	r.Get("/api/leads", h.GetLeads)
-	r.Get("/api/metagame", h.GetMetagame)
-	r.Get("/api/format-stats", h.GetFormatStats)
-	r.Get("/api/v2/stats", h.GetAggregatedStats)
+	r.Get("/api/v3/months", h.GetMonths)
+	r.Get("/api/v3/formats", h.GetFormats)
+	r.Get("/api/v3/viability", h.GetViability)
+	r.Get("/api/v3/usage", h.GetUsage)
+	r.Get("/api/v3/trend", h.GetTrend)
+	r.Get("/api/v3/leads", h.GetLeads)
+	r.Get("/api/v3/metagame", h.GetMetagame)
+	r.Get("/api/v3/format-stats", h.GetFormatStats)
 	r.Get("/api/v3/stats", h.GetAggregatedStatsTuple)
 	r.Get("/api/v3/init", h.GetInit)
+	r.Get("/api/v3/details", h.GetDetails)
 	r.Get("/", h.GetProxy)
 
 	r.Post("/_internal/restore", h.RestoreCache)
 	r.Post("/_internal/backup", h.BackupCache)
+	r.Post("/_internal/invalidate-months", h.InvalidateMonthsCache)
 }
 
 func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
-	if r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
+	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") && r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -61,7 +61,7 @@ func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
-	if r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
+	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") && r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -73,6 +73,20 @@ func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"success":true,"message":"Manual backup complete"}`))
+}
+
+func (h *Handler) InvalidateMonthsCache(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") && r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
+		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	h.cache.DBCache.Delete("months_list")
+	h.cache.DBCache.Delete("months_list_raw")
+	h.cache.DBCache.Delete("init_v3")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"Months and init caches invalidated"}`))
 }
 
 func (h *Handler) sendCached(w http.ResponseWriter, r *http.Request, data []byte, cacheControl string) {
@@ -93,14 +107,6 @@ func (h *Handler) sendCached(w http.ResponseWriter, r *http.Request, data []byte
 		return
 	}
 
-	if strings.Contains(acceptEncoding, "gzip") {
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		gz.Write(uncompressed)
-		gz.Close()
-		return
-	}
-
 	w.Write(uncompressed)
 }
 
@@ -117,7 +123,7 @@ func (h *Handler) GetMonths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonData, _ := json.Marshal(months)
+	jsonData, _ := json.MarshalNoEscape(months)
 	compressed, err := compressBrotliFast(jsonData)
 	if err == nil {
 		h.cache.DBCache.Set(cacheKey, compressed)
@@ -151,26 +157,12 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type FormatItem struct {
-		Format  string   `json:"format"`
-		Ratings []string `json:"ratings"`
+		Format   string   `json:"format"`
+		Ratings  []string `json:"ratings"`
+		genNum   int
+		tierRank int
 	}
 	var formatItems []FormatItem
-
-	for format, ratings := range formatsMap {
-		sort.Slice(ratings, func(i, j int) bool {
-			ni, _ := strconv.Atoi(ratings[i])
-			nj, _ := strconv.Atoi(ratings[j])
-			return ni < nj
-		})
-
-		if len(ratings) > 2 {
-			ratings = ratings[len(ratings)-2:]
-		}
-		formatItems = append(formatItems, FormatItem{
-			Format:  format,
-			Ratings: ratings,
-		})
-	}
 
 	tierOrder := []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
 	getTierRank := func(f string) int {
@@ -202,23 +194,35 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 		return 0
 	}
 
+	for format, ratings := range formatsMap {
+		sort.Slice(ratings, func(i, j int) bool {
+			ni, _ := strconv.Atoi(ratings[i])
+			nj, _ := strconv.Atoi(ratings[j])
+			return ni < nj
+		})
+
+		if len(ratings) > 2 {
+			ratings = ratings[len(ratings)-2:]
+		}
+		formatItems = append(formatItems, FormatItem{
+			Format:   format,
+			Ratings:  ratings,
+			genNum:   getGenNum(format),
+			tierRank: getTierRank(format),
+		})
+	}
+
 	sort.Slice(formatItems, func(i, j int) bool {
-		a := formatItems[i].Format
-		b := formatItems[j].Format
-		genA := getGenNum(a)
-		genB := getGenNum(b)
-		if genA != genB {
-			return genA > genB
+		if formatItems[i].genNum != formatItems[j].genNum {
+			return formatItems[i].genNum > formatItems[j].genNum
 		}
-		rankA := getTierRank(a)
-		rankB := getTierRank(b)
-		if rankA != rankB {
-			return rankA < rankB
+		if formatItems[i].tierRank != formatItems[j].tierRank {
+			return formatItems[i].tierRank < formatItems[j].tierRank
 		}
-		return a < b
+		return formatItems[i].Format < formatItems[j].Format
 	})
 
-	jsonData, _ := json.Marshal(formatItems)
+	jsonData, _ := json.MarshalNoEscape(formatItems)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
@@ -252,7 +256,7 @@ func (h *Handler) GetViability(w http.ResponseWriter, r *http.Request) {
 		dataMap[v.Pokemon] = v.Viability
 	}
 
-	jsonData, _ := json.Marshal(dataMap)
+	jsonData, _ := json.MarshalNoEscape(dataMap)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
@@ -296,7 +300,7 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonData, _ := json.Marshal(data)
+	jsonData, _ := json.MarshalNoEscape(data)
 	compressed, _ := compressBrotliFast(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
@@ -364,7 +368,7 @@ func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonDataAgg, _ := json.Marshal(dataAgg)
+	jsonDataAgg, _ := json.MarshalNoEscape(dataAgg)
 	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
@@ -401,16 +405,16 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 		viabilityMap[v.Pokemon] = v.Viability
 	}
 
-	leadsMap := make(map[string]string)
+	leadsMap := make(map[string]float64)
 	for _, l := range leads {
-		leadsMap[l.Pokemon] = fmt.Sprintf("%.5f%%", l.LeadPercent)
+		leadsMap[l.Pokemon] = l.LeadPercent
 	}
 
 	dataAgg := make([][]interface{}, 0, len(usage))
 	for i, u := range usage {
 		leadPct, exists := leadsMap[u.Pokemon]
 		if !exists {
-			leadPct = "0.00000%"
+			leadPct = 0.0
 		}
 		
 		viab := viabilityMap[u.Pokemon]
@@ -418,13 +422,13 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 		dataAgg = append(dataAgg, []interface{}{
 			i + 1,
 			u.Pokemon,
-			fmt.Sprintf("%.5f%%", u.UsagePercent),
+			u.UsagePercent,
 			leadPct,
 			viab,
 		})
 	}
 
-	jsonDataAgg, _ := json.Marshal(dataAgg)
+	jsonDataAgg, _ := json.MarshalNoEscape(dataAgg)
 	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
@@ -452,24 +456,12 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	type FormatItem struct {
-		Format  string   `json:"format"`
-		Ratings []string `json:"ratings"`
+		Format   string   `json:"format"`
+		Ratings  []string `json:"ratings"`
+		genNum   int
+		tierRank int
 	}
 	var formatItems []FormatItem
-	for format, ratings := range formatsMap {
-		sort.Slice(ratings, func(i, j int) bool {
-			ni, _ := strconv.Atoi(ratings[i])
-			nj, _ := strconv.Atoi(ratings[j])
-			return ni < nj
-		})
-		if len(ratings) > 2 {
-			ratings = ratings[len(ratings)-2:]
-		}
-		formatItems = append(formatItems, FormatItem{
-			Format:  format,
-			Ratings: ratings,
-		})
-	}
 
 	tierOrder := []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
 	getTierRank := func(f string) int {
@@ -500,20 +492,32 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 		}
 		return 0
 	}
+
+	for format, ratings := range formatsMap {
+		sort.Slice(ratings, func(i, j int) bool {
+			ni, _ := strconv.Atoi(ratings[i])
+			nj, _ := strconv.Atoi(ratings[j])
+			return ni < nj
+		})
+		if len(ratings) > 2 {
+			ratings = ratings[len(ratings)-2:]
+		}
+		formatItems = append(formatItems, FormatItem{
+			Format:   format,
+			Ratings:  ratings,
+			genNum:   getGenNum(format),
+			tierRank: getTierRank(format),
+		})
+	}
+
 	sort.Slice(formatItems, func(i, j int) bool {
-		a := formatItems[i].Format
-		b := formatItems[j].Format
-		genA := getGenNum(a)
-		genB := getGenNum(b)
-		if genA != genB {
-			return genA > genB
+		if formatItems[i].genNum != formatItems[j].genNum {
+			return formatItems[i].genNum > formatItems[j].genNum
 		}
-		rankA := getTierRank(a)
-		rankB := getTierRank(b)
-		if rankA != rankB {
-			return rankA < rankB
+		if formatItems[i].tierRank != formatItems[j].tierRank {
+			return formatItems[i].tierRank < formatItems[j].tierRank
 		}
-		return a < b
+		return formatItems[i].Format < formatItems[j].Format
 	})
 
 	var defaultFormat string
@@ -533,19 +537,19 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 		for _, v := range viability {
 			viabilityMap[v.Pokemon] = v.Viability
 		}
-		leadsMap := make(map[string]string)
+		leadsMap := make(map[string]float64)
 		for _, l := range leads {
-			leadsMap[l.Pokemon] = fmt.Sprintf("%.5f%%", l.LeadPercent)
+			leadsMap[l.Pokemon] = l.LeadPercent
 		}
 		for i, u := range usage {
 			leadPct, exists := leadsMap[u.Pokemon]
 			if !exists {
-				leadPct = "0.00000%"
+				leadPct = 0.0
 			}
 			dataAgg = append(dataAgg, []interface{}{
 				i + 1,
 				u.Pokemon,
-				fmt.Sprintf("%.5f%%", u.UsagePercent),
+				u.UsagePercent,
 				leadPct,
 				viabilityMap[u.Pokemon],
 			})
@@ -563,9 +567,28 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 		"stats":         dataAgg,
 	}
 
-	jsonDataAgg, _ := json.Marshal(resp)
+	jsonDataAgg, _ := json.MarshalNoEscape(resp)
 	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
 	h.sendCached(w, r, compressedAgg, "public, max-age=3600, s-maxage=3600")
+}
+
+func (h *Handler) GetDetails(w http.ResponseWriter, r *http.Request) {
+	month := r.URL.Query().Get("month")
+	format := r.URL.Query().Get("format")
+	rating := r.URL.Query().Get("rating")
+
+	if month == "" || format == "" || rating == "" {
+		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		return
+	}
+
+	targetURL := fmt.Sprintf("https://www.smogon.com/stats/%s/moveset/%s-%s.txt", month, format, rating)
+
+	q := r.URL.Query()
+	q.Set("url", targetURL)
+	r.URL.RawQuery = q.Encode()
+
+	h.GetProxy(w, r)
 }

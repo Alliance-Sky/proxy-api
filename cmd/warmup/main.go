@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/andybalholm/brotli"
+	"github.com/molecule-man/go-brrr"
 )
 
 const baseURL = "http://127.0.0.1:9000/api"
@@ -71,7 +71,7 @@ func (c *Client) getUncompressedJSON(url string, target interface{}) error {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	reader := brotli.NewReader(resp.Body)
+	reader := brrr.NewReader(resp.Body)
 	return json.NewDecoder(reader).Decode(target)
 }
 
