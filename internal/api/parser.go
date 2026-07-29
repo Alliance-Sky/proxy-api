@@ -1,9 +1,9 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"github.com/goccy/go-json"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -22,79 +22,91 @@ type PokemonData struct {
 	Teammates []StatEntry `json:"Teammates"`
 }
 
-var counterRegex = regexp.MustCompile(`^(.+?)\s+([0-9.]+)\s*\(`)
-
 func ParseMoveset(text []byte) ([]byte, error) {
-	text = bytes.ReplaceAll(text, []byte("\r\n"), []byte("\n"))
-	lines := bytes.Split(text, []byte("\n"))
 	data := make(map[string]*PokemonData)
+	scanner := bufio.NewScanner(bytes.NewReader(text))
 
 	var currentPokemon string
 	var currentSection string
 	var pokemonData *PokemonData
+	var state int
+	var tempName string
 
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
+	for scanner.Scan() {
+		line := scanner.Bytes()
 		trimmedLine := bytes.TrimSpace(line)
 
 		if bytes.HasPrefix(trimmedLine, []byte("+----------------------------------------+")) {
-			if i+3 < len(lines) &&
-				bytes.HasPrefix(bytes.TrimSpace(lines[i+2]), []byte("+----------------------------------------+")) &&
-				bytes.HasPrefix(bytes.TrimSpace(lines[i+3]), []byte("| Raw count:")) {
-
-				nameLine := bytes.TrimSpace(lines[i+1])
-				if len(nameLine) > 1 {
-					idx := bytes.Index(nameLine[1:], []byte("|"))
-					if idx != -1 {
-						currentPokemon = string(bytes.TrimSpace(nameLine[1 : 1+idx]))
-						pokemonData = &PokemonData{
-							Abilities: []StatEntry{},
-							Items:     []StatEntry{},
-							Spreads:   []StatEntry{},
-							Moves:     []StatEntry{},
-							Counters:  []StatEntry{},
-							Teammates: []StatEntry{},
-						}
-						data[currentPokemon] = pokemonData
-						currentSection = ""
-						i += 3
-						continue
-					}
-				}
+			if state == 2 {
+				state = 3
+			} else {
+				state = 1
 			}
-		}
-
-		if currentPokemon == "" {
-			continue
-		}
-
-		if bytes.HasPrefix(trimmedLine, []byte("+----------------------------------------+")) {
 			currentSection = ""
 			continue
 		}
 
 		if bytes.HasPrefix(trimmedLine, []byte("| Abilities")) {
 			currentSection = "Abilities"
+			state = 0
 			continue
 		}
 		if bytes.HasPrefix(trimmedLine, []byte("| Items")) {
 			currentSection = "Items"
+			state = 0
 			continue
 		}
 		if bytes.HasPrefix(trimmedLine, []byte("| Spreads")) {
 			currentSection = "Spreads"
+			state = 0
 			continue
 		}
 		if bytes.HasPrefix(trimmedLine, []byte("| Moves")) {
 			currentSection = "Moves"
+			state = 0
 			continue
 		}
 		if bytes.HasPrefix(trimmedLine, []byte("| Teammates")) {
 			currentSection = "Teammates"
+			state = 0
 			continue
 		}
 		if bytes.HasPrefix(trimmedLine, []byte("| Checks and Counters")) {
 			currentSection = "Counters"
+			state = 0
+			continue
+		}
+
+		if state == 1 {
+			if len(trimmedLine) > 1 && trimmedLine[0] == '|' {
+				idx := bytes.Index(trimmedLine[1:], []byte("|"))
+				if idx != -1 {
+					tempName = string(bytes.TrimSpace(trimmedLine[1 : 1+idx]))
+					state = 2
+					continue
+				}
+			}
+			state = 0
+		} else if state == 3 {
+			if bytes.HasPrefix(trimmedLine, []byte("| Raw count:")) {
+				currentPokemon = tempName
+				pokemonData = &PokemonData{
+					Abilities: []StatEntry{},
+					Items:     []StatEntry{},
+					Spreads:   []StatEntry{},
+					Moves:     []StatEntry{},
+					Counters:  []StatEntry{},
+					Teammates: []StatEntry{},
+				}
+				data[currentPokemon] = pokemonData
+				currentSection = ""
+				state = 0
+				continue
+			}
+			state = 0
+		}
+
+		if currentPokemon == "" {
 			continue
 		}
 
@@ -108,13 +120,17 @@ func ParseMoveset(text []byte) ([]byte, error) {
 					if strings.HasPrefix(content, "(") {
 						continue
 					}
-					match := counterRegex.FindStringSubmatch(content)
-					if len(match) == 3 {
-						name := strings.TrimSpace(match[1])
-						percent := strings.TrimSpace(match[2])
-						if name != "Other" && name != "Empty" {
-							if p, err := strconv.ParseFloat(percent, 64); err == nil && p > 0 {
-								pokemonData.Counters = append(pokemonData.Counters, StatEntry{Name: name, Percent: percent})
+					idxParen := strings.LastIndexByte(content, '(')
+					if idxParen != -1 {
+						beforeParen := strings.TrimSpace(content[:idxParen])
+						lastSpace := strings.LastIndexByte(beforeParen, ' ')
+						if lastSpace != -1 {
+							name := strings.TrimSpace(beforeParen[:lastSpace])
+							percent := strings.TrimSpace(beforeParen[lastSpace+1:])
+							if name != "Other" && name != "Empty" {
+								if p, err := strconv.ParseFloat(percent, 64); err == nil && p > 0 {
+									pokemonData.Counters = append(pokemonData.Counters, StatEntry{Name: name, Percent: percent})
+								}
 							}
 						}
 					}

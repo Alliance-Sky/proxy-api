@@ -223,7 +223,7 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 	})
 
 	jsonData, _ := json.MarshalNoEscape(formatItems)
-	compressed, _ := compressBrotliFast(jsonData)
+	compressed, _ := compressBrotli(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -257,7 +257,7 @@ func (h *Handler) GetViability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonData, _ := json.MarshalNoEscape(dataMap)
-	compressed, _ := compressBrotliFast(jsonData)
+	compressed, _ := compressBrotli(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -301,7 +301,7 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonData, _ := json.MarshalNoEscape(data)
-	compressed, _ := compressBrotliFast(jsonData)
+	compressed, _ := compressBrotli(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -369,7 +369,7 @@ func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonDataAgg, _ := json.MarshalNoEscape(dataAgg)
-	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
+	compressedAgg, _ := compressBrotli(jsonDataAgg)
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
 	h.sendCached(w, r, compressedAgg, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -429,7 +429,7 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 	}
 
 	jsonDataAgg, _ := json.MarshalNoEscape(dataAgg)
-	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
+	compressedAgg, _ := compressBrotli(jsonDataAgg)
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
 	h.sendCached(w, r, compressedAgg, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -528,10 +528,36 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var dataAgg [][]interface{}
+	var initMetagame interface{}
+	var initTotalBattles int
+
 	if defaultFormat != "" && defaultRating != "" {
 		usage, _ := h.db.GetUsage(r.Context(), latestMonth, defaultFormat, defaultRating)
 		viability, _ := h.db.GetViability(r.Context(), latestMonth, defaultFormat, defaultRating)
 		leads, _ := h.db.GetLeads(r.Context(), latestMonth, defaultFormat, defaultRating)
+
+		metaRow, err := h.db.GetMetagame(r.Context(), latestMonth, defaultFormat, defaultRating)
+		if err == nil {
+			type MetaResponse struct {
+				Stalliness float64         `json:"stalliness"`
+				Playstyles json.RawMessage `json:"playstyles"`
+			}
+			metaResp := MetaResponse{Stalliness: metaRow.Stalliness, Playstyles: []byte("{}")}
+			if len(metaRow.Playstyles) > 0 {
+				metaResp.Playstyles = metaRow.Playstyles
+			}
+			initMetagame = metaResp
+		} else {
+			initMetagame = map[string]interface{}{
+				"stalliness": 0,
+				"playstyles": []byte("{}"),
+			}
+		}
+
+		tb, err := h.db.GetFormatStats(r.Context(), latestMonth, defaultFormat, defaultRating)
+		if err == nil {
+			initTotalBattles = tb
+		}
 
 		viabilityMap := make(map[string]json.RawMessage)
 		for _, v := range viability {
@@ -565,6 +591,8 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 		"defaultFormat": defaultFormat,
 		"defaultRating": defaultRating,
 		"stats":         dataAgg,
+		"metagame":      initMetagame,
+		"totalBattles":  initTotalBattles,
 	}
 
 	jsonDataAgg, _ := json.MarshalNoEscape(resp)
@@ -585,10 +613,7 @@ func (h *Handler) GetDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetURL := fmt.Sprintf("https://www.smogon.com/stats/%s/moveset/%s-%s.txt", month, format, rating)
+	pokemon := r.URL.Query().Get("pokemon")
 
-	q := r.URL.Query()
-	q.Set("url", targetURL)
-	r.URL.RawQuery = q.Encode()
-
-	h.GetProxy(w, r)
+	h.serveProxy(w, r, targetURL, pokemon)
 }

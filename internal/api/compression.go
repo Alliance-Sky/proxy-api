@@ -29,6 +29,11 @@ var (
 			return brrr.NewReader(bytes.NewReader(nil))
 		},
 	}
+	bufferPool = sync.Pool{
+		New: func() interface{} {
+			return new(bytes.Buffer)
+		},
+	}
 )
 
 func compressBrotli(data []byte) ([]byte, error) {
@@ -40,7 +45,9 @@ func compressBrotliFast(data []byte) ([]byte, error) {
 }
 
 func compressBrotliWithLevel(data []byte, level int) ([]byte, error) {
-	var buf bytes.Buffer
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
 	var writer *brrr.Writer
 	if level == 6 {
 		writer = writerPoolL6.Get().(*brrr.Writer)
@@ -49,21 +56,26 @@ func compressBrotliWithLevel(data []byte, level int) ([]byte, error) {
 		writer = writerPoolL3.Get().(*brrr.Writer)
 		defer writerPoolL3.Put(writer)
 	} else {
-		writer, _ = brrr.NewWriter(&buf, level)
+		writer, _ = brrr.NewWriter(buf, level)
 	}
 
 	if writer != nil {
-		writer.Reset(&buf)
+		writer.Reset(buf)
 	}
 
 	if _, err := writer.Write(data); err != nil {
+		bufferPool.Put(buf)
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {
+		bufferPool.Put(buf)
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	bufferPool.Put(buf)
+	return result, nil
 }
 
 func decompressBrotli(data []byte) ([]byte, error) {

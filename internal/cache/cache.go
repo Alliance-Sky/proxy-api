@@ -16,7 +16,7 @@ func NewService() (*Service, error) {
 	movesetConfig := bigcache.DefaultConfig(24 * time.Hour)
 	movesetConfig.HardMaxCacheSize = 3072
 	movesetConfig.CleanWindow = 1 * time.Hour
-	movesetConfig.MaxEntrySize = 1024 * 1024
+	movesetConfig.MaxEntrySize = 8 * 1024 * 1024
 
 	mc, err := bigcache.New(context.Background(), movesetConfig)
 	if err != nil {

@@ -36,7 +36,10 @@ var httpClient = &http.Client{
 func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL.Query().Get("url")
 	pokemon := r.URL.Query().Get("pokemon")
+	h.serveProxy(w, r, targetURL, pokemon)
+}
 
+func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, pokemon string) {
 	if targetURL == "" {
 		stats := map[string]interface{}{
 			"inboundBytes":         atomic.LoadUint64(&TotalInboundBytes),

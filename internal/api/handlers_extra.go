@@ -1,11 +1,19 @@
 package api
 
 import (
+	"bytes"
 	"github.com/goccy/go-json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+)
+
+var (
+	cachedMonthsSlice []string
+	cachedMonthsRaw   []byte
+	cachedMonthsMu    sync.RWMutex
 )
 
 func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
@@ -37,11 +45,26 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 
 	var allMonths []string
 	if cached, err := h.cache.DBCache.Get("months_list_raw"); err == nil {
-		json.Unmarshal(cached, &allMonths)
+		cachedMonthsMu.RLock()
+		if len(cachedMonthsRaw) > 0 && bytes.Equal(cachedMonthsRaw, cached) {
+			allMonths = cachedMonthsSlice
+			cachedMonthsMu.RUnlock()
+		} else {
+			cachedMonthsMu.RUnlock()
+			json.Unmarshal(cached, &allMonths)
+			cachedMonthsMu.Lock()
+			cachedMonthsRaw = append([]byte(nil), cached...)
+			cachedMonthsSlice = allMonths
+			cachedMonthsMu.Unlock()
+		}
 	} else {
 		allMonths, _ = h.db.GetMonths(r.Context())
 		rawBytes, _ := json.MarshalNoEscape(allMonths)
 		h.cache.DBCache.Set("months_list_raw", rawBytes)
+		cachedMonthsMu.Lock()
+		cachedMonthsRaw = append([]byte(nil), rawBytes...)
+		cachedMonthsSlice = allMonths
+		cachedMonthsMu.Unlock()
 	}
 
 	if len(allMonths) > limit {
@@ -120,7 +143,7 @@ func (h *Handler) GetLeads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonData, _ := json.MarshalNoEscape(data)
-	compressed, _ := compressBrotliFast(jsonData)
+	compressed, _ := compressBrotli(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -158,7 +181,7 @@ func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonData, _ := json.MarshalNoEscape(resp)
-	compressed, _ := compressBrotliFast(jsonData)
+	compressed, _ := compressBrotli(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -191,7 +214,7 @@ func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonData, _ := json.MarshalNoEscape(resp)
-	compressed, _ := compressBrotliFast(jsonData)
+	compressed, _ := compressBrotli(jsonData)
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
