@@ -1,68 +1,89 @@
-# Proxy API for smogonstats.eu.cc
+# proxy-api
 
-A fast, caching reverse proxy and API backend built in **Go** to serve Smogon usage stats efficiently. 
-Features strict SSRF protections, graceful shutdown, and robust caching (`BigCache`) to minimize bandwidth and database queries. The backend operates on the optimized v3 API layer to serve highly condensed JSON payloads (stripping expensive string formatting overhead). It also includes the necessary data populator scripts to scrape Smogon stats directly into PostgreSQL.
+A Go backend and reverse proxy for [smogonstats.eu.cc](https://smogonstats.eu.cc).
+
+It serves Smogon usage stats endpoints, caches queries using BigCache, stores data in PostgreSQL, and generates dynamic sitemaps.
+
+---
+
+## Overview and Architecture
+
+- API Engine: Built in Go using Chi router and pgx PostgreSQL driver.
+- Data Storage: PostgreSQL database (`smogon_stats`) holding usage, leads, format stats, metagame, and viability data.
+- Caching: In-memory caching with BigCache to reduce database load.
+- Endpoints: Exposes v3 API routes (`/api/v3/init`, `/api/v3/stats`, `/api/v3/details`, `/api/v3/trend`, `/api/v3/format-stats`, `/api/v3/metagame`), dynamic `/sitemap.xml`, and reverse-proxy capabilities.
+- Scrapers and Populators: Go binaries that fetch and parse raw text files from Smogon directly into PostgreSQL.
+
+---
 
 ## Requirements
-- Go 1.20+
-- PostgreSQL instance running locally on `/var/run/postgresql` with a `smogon_stats` database and `ubuntu` user (or set `DATABASE_URL`).
 
-## Development & Building
+- Go 1.20 or higher
+- PostgreSQL running locally or via `DATABASE_URL`
 
-The project includes a `Makefile` to easily build the API server and all the data scrapers.
+---
 
-To compile all binaries:
+## Development and Building
+
+Compile all binaries (API server and scrapers):
+
 ```bash
 make build
 ```
 
-To run the local proxy server:
+Run the API server locally:
+
 ```bash
 make run
 ```
-*Note: The proxy runs on port `9000` by default. This can be overridden with the `PORT` environment variable.*
+
+The server listens on port `9000` by default. Override it with the `PORT` environment variable.
+
+---
 
 ## Data Population
 
-This repository includes 5 standalone tools to scrape and populate the PostgreSQL database from the raw Smogon text files:
+Build and run all 5 populator scripts to scrape and import Smogon statistics into PostgreSQL:
 
+```bash
+make populate
+```
+
+Populator binaries included:
 - `populate-usage-stats-bin`
 - `populate-format-stats-bin`
 - `populate-leads-bin`
 - `populate-metagame-bin`
 - `populate-viability-bin`
 
-To build and run all populator scripts sequentially:
-```bash
-make populate
-```
+---
 
-## Deployment
+## Deployment (systemd)
 
-This API is designed to be hosted on a Linux instance. To ensure the proxy runs forever and automatically restarts on system boot or crash, a `systemd` service file is provided.
+To run the proxy continuously on Linux:
 
-1. Copy the service file to the systemd directory:
 ```bash
 sudo cp proxy-api.service /etc/systemd/system/
-```
-2. Reload systemd, enable the service to start on boot, and start it:
-```bash
 sudo systemctl daemon-reload
 sudo systemctl enable proxy-api
 sudo systemctl start proxy-api
 ```
-3. Check the status or view logs:
+
+Check service status or logs:
+
 ```bash
 sudo systemctl status proxy-api
 sudo journalctl -u proxy-api -f
 ```
 
+---
+
 ## Credits
 
-- **[Go](https://go.dev/)**: For the high-performance standard library and concurrency primitives.
-- **[Smogon](https://www.smogon.com/stats/)**: For providing the raw competitive Pokémon usage statistics data.
-- **[pgx](https://github.com/jackc/pgx)**: For the fast PostgreSQL driver.
-- **[BigCache](https://github.com/allegro/bigcache)**: For the high-performance concurrent local cache.
+- Go: Standard library and concurrency primitives.
+- Smogon: Raw competitive Pokémon usage statistics.
+- pgx: PostgreSQL driver.
+- BigCache: Concurrent in-memory cache.
 
 ## License
 

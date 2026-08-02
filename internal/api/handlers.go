@@ -12,6 +12,7 @@ import (
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
 	"github.com/Alliance-Sky/proxy-api/internal/db"
 	"github.com/go-chi/chi/v5"
+	"encoding/xml"
 )
 
 type Handler struct {
@@ -37,6 +38,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v3/init", h.GetInit)
 	r.Get("/api/v3/details", h.GetDetails)
 	r.Get("/", h.GetProxy)
+
+	r.Get("/sitemap.xml", h.GetSitemap)
 
 	r.Post("/_internal/restore", h.RestoreCache)
 	r.Post("/_internal/backup", h.BackupCache)
@@ -82,6 +85,7 @@ func (h *Handler) InvalidateMonthsCache(w http.ResponseWriter, r *http.Request) 
 	h.cache.DBCache.Delete("months_list")
 	h.cache.DBCache.Delete("months_list_raw")
 	h.cache.DBCache.Delete("init_v3")
+	h.cache.DBCache.Delete("sitemap_xml")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"success":true,"message":"Months and init caches invalidated"}`))
@@ -581,4 +585,60 @@ func (h *Handler) GetDetails(w http.ResponseWriter, r *http.Request) {
 	pokemon := r.URL.Query().Get("pokemon")
 
 	h.serveProxy(w, r, targetURL, pokemon)
+}
+
+func (h *Handler) GetSitemap(w http.ResponseWriter, r *http.Request) {
+	cacheKey := "sitemap_xml"
+	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400")
+		w.Write(cached)
+		return
+	}
+
+	combinations, err := h.db.GetAllFormatRatings(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	type URL struct {
+		Loc string `xml:"loc"`
+	}
+	type URLSet struct {
+		XMLName xml.Name `xml:"urlset"`
+		Xmlns   string   `xml:"xmlns,attr"`
+		URLs    []URL    `xml:"url"`
+	}
+
+	urlSet := URLSet{
+		Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9",
+		URLs:  make([]URL, 0, len(combinations)+5),
+	}
+
+	// Add static pages
+	base := "https://smogonstats.eu.cc"
+	urlSet.URLs = append(urlSet.URLs, URL{Loc: base + "/"})
+	urlSet.URLs = append(urlSet.URLs, URL{Loc: base + "/guide"})
+	urlSet.URLs = append(urlSet.URLs, URL{Loc: base + "/charts"})
+	urlSet.URLs = append(urlSet.URLs, URL{Loc: base + "/trend"})
+	urlSet.URLs = append(urlSet.URLs, URL{Loc: base + "/changelog"})
+
+	for _, c := range combinations {
+		urlSet.URLs = append(urlSet.URLs, URL{Loc: fmt.Sprintf("%s/stats/%s/%s/%s", base, c.Format, c.Rating, c.Month)})
+	}
+
+	xmlData, err := xml.MarshalIndent(urlSet, "", "  ")
+	if err != nil {
+		http.Error(w, `{"error":"Failed to generate xml"}`, http.StatusInternalServerError)
+		return
+	}
+
+	finalXML := append([]byte(xml.Header), xmlData...)
+	
+	h.cache.DBCache.Set(cacheKey, finalXML)
+	
+	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400")
+	w.Write(finalXML)
 }

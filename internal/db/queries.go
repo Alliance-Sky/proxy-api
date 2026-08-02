@@ -90,3 +90,27 @@ func (s *Service) GetUsage(ctx context.Context, month, format, rating string) ([
 	}
 	return results, rows.Err()
 }
+
+type MonthFormatRating struct {
+	Month  string
+	Format string
+	Rating string
+}
+
+func (s *Service) GetAllFormatRatings(ctx context.Context) ([]MonthFormatRating, error) {
+	rows, err := s.Pool.Query(ctx, "SELECT DISTINCT month, format, rating FROM usage_stats ORDER BY month DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MonthFormatRating
+	for rows.Next() {
+		var f MonthFormatRating
+		if err := rows.Scan(&f.Month, &f.Format, &f.Rating); err != nil {
+			return nil, err
+		}
+		results = append(results, f)
+	}
+	return results, rows.Err()
+}
