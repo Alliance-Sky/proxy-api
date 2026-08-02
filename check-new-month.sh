@@ -12,12 +12,19 @@ if [ "$CURRENT_KNOWN_MONTH" != "" ] && [ "$LATEST_SMOGON_MONTH" != "" ]; then
   if [ "$CURRENT_KNOWN_MONTH" != "$LATEST_SMOGON_MONTH" ]; then
     echo "$(date): New month detected: $LATEST_SMOGON_MONTH (Current: $CURRENT_KNOWN_MONTH). Starting sync..."
     
-    # 1. Trigger backend population scripts
-    /home/ubuntu/proxy-api/populate-usage-stats-bin >> /home/ubuntu/proxy-api/logs/usage.log 2>&1
-    /home/ubuntu/proxy-api/populate-format-stats-bin >> /home/ubuntu/proxy-api/logs/format.log 2>&1
-    /home/ubuntu/proxy-api/populate-leads-bin >> /home/ubuntu/proxy-api/logs/leads.log 2>&1
-    /home/ubuntu/proxy-api/populate-metagame-bin >> /home/ubuntu/proxy-api/logs/metagame.log 2>&1
-    /home/ubuntu/proxy-api/populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
+    # 1. Compile and trigger backend population scripts
+    cd /home/ubuntu/proxy-api
+    go build -o populate-usage-stats-bin ./cmd/populate-usage-stats
+    go build -o populate-format-stats-bin ./cmd/populate-format-stats
+    go build -o populate-leads-bin ./cmd/populate-leads
+    go build -o populate-metagame-bin ./cmd/populate-metagame
+    go build -o populate-viability-bin ./cmd/populate-viability
+    
+    ./populate-usage-stats-bin >> /home/ubuntu/proxy-api/logs/usage.log 2>&1
+    ./populate-format-stats-bin >> /home/ubuntu/proxy-api/logs/format.log 2>&1
+    ./populate-leads-bin >> /home/ubuntu/proxy-api/logs/leads.log 2>&1
+    ./populate-metagame-bin >> /home/ubuntu/proxy-api/logs/metagame.log 2>&1
+    ./populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
     
     # 2. Invalidate backend cache
     curl -X POST http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1

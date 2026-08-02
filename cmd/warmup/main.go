@@ -117,7 +117,7 @@ func main() {
 	var wg sync.WaitGroup
 	var completed int32
 
-	endpoints := []string{"usage", "leads", "viability", "metagame", "format-stats"}
+	endpoints := []string{"usage", "metagame", "format-stats", "stats"}
 
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)

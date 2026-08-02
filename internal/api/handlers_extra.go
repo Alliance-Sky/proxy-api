@@ -105,49 +105,6 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	h.sendCached(w, r, compressed, "public, max-age=3600, s-maxage=3600")
 }
 
-func (h *Handler) GetLeads(w http.ResponseWriter, r *http.Request) {
-	month := r.URL.Query().Get("month")
-	format := r.URL.Query().Get("format")
-	rating := r.URL.Query().Get("rating")
-
-	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
-		return
-	}
-
-	cacheKey := fmt.Sprintf("leads_%s_%s_%s", month, format, rating)
-	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
-		return
-	}
-
-	leads, err := h.db.GetLeads(r.Context(), month, format, rating)
-	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	type LeadResponse struct {
-		Rank        int    `json:"rank"`
-		Pokemon     string `json:"pokemon"`
-		LeadPercent string `json:"leadPercent"`
-	}
-
-	data := make([]LeadResponse, 0)
-	for i, l := range leads {
-		data = append(data, LeadResponse{
-			Rank:        i + 1,
-			Pokemon:     l.Pokemon,
-			LeadPercent: fmt.Sprintf("%.5f%%", l.LeadPercent),
-		})
-	}
-
-	jsonData, _ := json.MarshalNoEscape(data)
-	compressed, _ := compressBrotli(jsonData)
-	h.cache.DBCache.Set(cacheKey, compressed)
-
-	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
-}
 
 func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 	month := r.URL.Query().Get("month")

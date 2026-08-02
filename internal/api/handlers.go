@@ -29,10 +29,8 @@ func NewHandler(cache *cache.Service, db *db.Service) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v3/months", h.GetMonths)
 	r.Get("/api/v3/formats", h.GetFormats)
-	r.Get("/api/v3/viability", h.GetViability)
 	r.Get("/api/v3/usage", h.GetUsage)
 	r.Get("/api/v3/trend", h.GetTrend)
-	r.Get("/api/v3/leads", h.GetLeads)
 	r.Get("/api/v3/metagame", h.GetMetagame)
 	r.Get("/api/v3/format-stats", h.GetFormatStats)
 	r.Get("/api/v3/stats", h.GetAggregatedStatsTuple)
@@ -229,39 +227,6 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }
 
-func (h *Handler) GetViability(w http.ResponseWriter, r *http.Request) {
-	month := r.URL.Query().Get("month")
-	format := r.URL.Query().Get("format")
-	rating := r.URL.Query().Get("rating")
-
-	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
-		return
-	}
-
-	cacheKey := fmt.Sprintf("viability_%s_%s_%s", month, format, rating)
-	if cached, err := h.cache.DBCache.Get(cacheKey); err == nil {
-		h.sendCached(w, r, cached, "public, max-age=2592000, s-maxage=2592000, immutable")
-		return
-	}
-
-	viability, err := h.db.GetViability(r.Context(), month, format, rating)
-	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	dataMap := make(map[string]json.RawMessage)
-	for _, v := range viability {
-		dataMap[v.Pokemon] = v.Viability
-	}
-
-	jsonData, _ := json.MarshalNoEscape(dataMap)
-	compressed, _ := compressBrotli(jsonData)
-	h.cache.DBCache.Set(cacheKey, compressed)
-
-	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
-}
 
 func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	month := r.URL.Query().Get("month")

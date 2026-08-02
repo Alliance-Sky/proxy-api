@@ -107,8 +107,7 @@ func main() {
 					handler func(http.ResponseWriter, *http.Request)
 				}{
 					{"/api/v3/usage", h.GetUsage},
-					{"/api/v3/viability", h.GetViability},
-					{"/api/v3/leads", h.GetLeads},
+
 					{"/api/v3/metagame", h.GetMetagame},
 					{"/api/v3/format-stats", h.GetFormatStats},
 					{"/api/v3/stats", h.GetAggregatedStatsTuple},
