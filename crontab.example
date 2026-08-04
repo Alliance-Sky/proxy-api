@@ -1,20 +1,8 @@
 # Example crontab for Smogon Go population scripts
 # Run `crontab -e` and paste these lines to automate fetching new stats
 
-# Usage stats: run once a day at 2:00 AM
-0 2 * * * /home/ubuntu/proxy-api/populate-all-bin usage >> /home/ubuntu/proxy-api/logs/usage.log 2>&1
-
-# Format stats: run once a day at 2:30 AM
-30 2 * * * /home/ubuntu/proxy-api/populate-all-bin format-stats >> /home/ubuntu/proxy-api/logs/format.log 2>&1
-
-# Leads stats: run once a day at 3:00 AM
-0 3 * * * /home/ubuntu/proxy-api/populate-all-bin leads >> /home/ubuntu/proxy-api/logs/leads.log 2>&1
-
-# Metagame stats: run once a day at 3:30 AM
-30 3 * * * /home/ubuntu/proxy-api/populate-all-bin metagame >> /home/ubuntu/proxy-api/logs/metagame.log 2>&1
-
-# Viability stats: run once a day at 4:00 AM
-0 4 * * * /home/ubuntu/proxy-api/populate-all-bin viability >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
-
-# Invalidate proxy-api months cache after all scripts finish (4:30 AM)
-30 4 * * * curl -X POST http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1
+# Check for new Smogon stats every hour (at the top of the hour)
+# This script pings smogon.com/stats and compares it to the running proxy-api.
+# If a new month is found, it automatically compiles and runs the population scripts,
+# invalidates the cache, and triggers a frontend SSG rebuild on Cloudflare.
+0 * * * * /home/ubuntu/proxy-api/check-new-month.sh >> /home/ubuntu/proxy-api/logs/check-new-month.log 2>&1
