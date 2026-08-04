@@ -7,14 +7,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 )
 
-var (
-	cachedMonthsSlice []string
-	cachedMonthsRaw   []byte
-	cachedMonthsMu    sync.RWMutex
-)
+
 
 func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
@@ -45,26 +40,26 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 
 	var allMonths []string
 	if cached, err := h.cache.DBCache.Get("months_list_raw"); err == nil {
-		cachedMonthsMu.RLock()
-		if len(cachedMonthsRaw) > 0 && bytes.Equal(cachedMonthsRaw, cached) {
-			allMonths = cachedMonthsSlice
-			cachedMonthsMu.RUnlock()
+		h.cachedMonthsMu.RLock()
+		if len(h.cachedMonthsRaw) > 0 && bytes.Equal(h.cachedMonthsRaw, cached) {
+			allMonths = h.cachedMonthsSlice
+			h.cachedMonthsMu.RUnlock()
 		} else {
-			cachedMonthsMu.RUnlock()
+			h.cachedMonthsMu.RUnlock()
 			json.Unmarshal(cached, &allMonths)
-			cachedMonthsMu.Lock()
-			cachedMonthsRaw = append([]byte(nil), cached...)
-			cachedMonthsSlice = allMonths
-			cachedMonthsMu.Unlock()
+			h.cachedMonthsMu.Lock()
+			h.cachedMonthsRaw = append([]byte(nil), cached...)
+			h.cachedMonthsSlice = allMonths
+			h.cachedMonthsMu.Unlock()
 		}
 	} else {
 		allMonths, _ = h.db.GetMonths(r.Context())
 		rawBytes, _ := json.MarshalNoEscape(allMonths)
 		h.cache.DBCache.Set("months_list_raw", rawBytes)
-		cachedMonthsMu.Lock()
-		cachedMonthsRaw = append([]byte(nil), rawBytes...)
-		cachedMonthsSlice = allMonths
-		cachedMonthsMu.Unlock()
+		h.cachedMonthsMu.Lock()
+		h.cachedMonthsRaw = append([]byte(nil), rawBytes...)
+		h.cachedMonthsSlice = allMonths
+		h.cachedMonthsMu.Unlock()
 	}
 
 	if len(allMonths) > limit {

@@ -14,17 +14,13 @@ if [ "$CURRENT_KNOWN_MONTH" != "" ] && [ "$LATEST_SMOGON_MONTH" != "" ]; then
     
     # 1. Compile and trigger backend population scripts
     cd /home/ubuntu/proxy-api
-    go build -o populate-usage-stats-bin ./cmd/populate-usage-stats
-    go build -o populate-format-stats-bin ./cmd/populate-format-stats
-    go build -o populate-leads-bin ./cmd/populate-leads
-    go build -o populate-metagame-bin ./cmd/populate-metagame
-    go build -o populate-viability-bin ./cmd/populate-viability
+    go build -o populate-all-bin ./cmd/populate-all
     
-    ./populate-usage-stats-bin >> /home/ubuntu/proxy-api/logs/usage.log 2>&1
-    ./populate-format-stats-bin >> /home/ubuntu/proxy-api/logs/format.log 2>&1
-    ./populate-leads-bin >> /home/ubuntu/proxy-api/logs/leads.log 2>&1
-    ./populate-metagame-bin >> /home/ubuntu/proxy-api/logs/metagame.log 2>&1
-    ./populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
+    ./populate-all-bin usage >> /home/ubuntu/proxy-api/logs/usage.log 2>&1
+    ./populate-all-bin format-stats >> /home/ubuntu/proxy-api/logs/format.log 2>&1
+    ./populate-all-bin leads >> /home/ubuntu/proxy-api/logs/leads.log 2>&1
+    ./populate-all-bin metagame >> /home/ubuntu/proxy-api/logs/metagame.log 2>&1
+    ./populate-all-bin viability >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
     
     # 2. Invalidate backend cache
     curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1

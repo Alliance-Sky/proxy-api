@@ -47,7 +47,7 @@ func main() {
 	}
 	defer dbSvc.Close()
 
-	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"))
+	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"), "https://www.smogon.com/stats")
 
 	months, err := dbSvc.GetMonths(ctx)
 	if err != nil {

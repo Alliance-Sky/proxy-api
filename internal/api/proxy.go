@@ -11,27 +11,11 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
-	"golang.org/x/sync/singleflight"
 )
 
-var (
-	TotalInboundBytes  uint64
-	TotalOutboundBytes uint64
-	proxyGroup         singleflight.Group
-	parseGroup         singleflight.Group
-)
 
-var httpClient = &http.Client{
-	Timeout: 35 * time.Second,
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	},
-}
 
 func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL.Query().Get("url")
@@ -42,8 +26,8 @@ func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, pokemon string) {
 	if targetURL == "" {
 		stats := map[string]interface{}{
-			"inboundBytes":         atomic.LoadUint64(&TotalInboundBytes),
-			"outboundBytes":        atomic.LoadUint64(&TotalOutboundBytes),
+			"inboundBytes":         atomic.LoadUint64(&h.TotalInboundBytes),
+			"outboundBytes":        atomic.LoadUint64(&h.TotalOutboundBytes),
 			"movesetCacheItems":    h.cache.MovesetCache.Len(),
 			"movesetCacheCapacity": h.cache.MovesetCache.Capacity(),
 			"dbCacheItems":         h.cache.DBCache.Len(),
@@ -56,7 +40,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 		return
 	}
 
-	if !strings.HasPrefix(targetURL, "https://www.smogon.com/stats/") {
+	if !strings.HasPrefix(targetURL, h.smogonURL) {
 		http.Error(w, `{"error":"Access denied: You can only proxy Smogon stats URLs."}`, http.StatusForbidden)
 		return
 	}
@@ -81,12 +65,12 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 		parsedURL, _ := url.Parse(targetURL)
 		isMoveset := parsedURL != nil && strings.HasSuffix(parsedURL.Path, ".txt") && strings.Contains(parsedURL.Path, "/moveset/")
 
-		v, err, _ := proxyGroup.Do(cacheKey, func() (interface{}, error) {
+		v, err, _ := h.proxyGroup.Do(cacheKey, func() (interface{}, error) {
 			if pokemon != "" && isMoveset {
 				if fullCachedBytes, err := h.cache.MovesetCache.Get(targetURL); err == nil {
 					var fullEntry cache.MovesetCacheEntry
 					if err := fullEntry.Unmarshal(fullCachedBytes); err == nil {
-						vMap, parseErr, _ := parseGroup.Do(targetURL, func() (interface{}, error) {
+						vMap, parseErr, _ := h.parseGroup.Do(targetURL, func() (interface{}, error) {
 							uncompressed, err := decompressBrotli(fullEntry.Body)
 							if err != nil {
 								return nil, err
@@ -127,7 +111,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 			}
 			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
 
-			resp, err := httpClient.Do(req)
+			resp, err := h.httpClient.Do(req)
 			if err != nil {
 				return nil, fmt.Errorf("fetch_failed")
 			}
@@ -138,7 +122,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 				return nil, fmt.Errorf("read_failed")
 			}
 
-			atomic.AddUint64(&TotalInboundBytes, uint64(len(bodyBytes)))
+			atomic.AddUint64(&h.TotalInboundBytes, uint64(len(bodyBytes)))
 
 			savedHeaders := make(map[string]string)
 			passThroughHeaders := []string{"Content-Type", "Etag", "Last-Modified"}
@@ -281,16 +265,16 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 		if strings.Contains(acceptEncoding, "br") {
 			w.WriteHeader(entry.StatusCode)
 			w.Write(entry.Body)
-			atomic.AddUint64(&TotalOutboundBytes, uint64(len(entry.Body)))
+			atomic.AddUint64(&h.TotalOutboundBytes, uint64(len(entry.Body)))
 		} else {
 			uncompressed, _ := decompressBrotli(entry.Body)
 			w.WriteHeader(entry.StatusCode)
 			w.Write(uncompressed)
-			atomic.AddUint64(&TotalOutboundBytes, uint64(len(uncompressed)))
+			atomic.AddUint64(&h.TotalOutboundBytes, uint64(len(uncompressed)))
 		}
 	} else {
 		w.WriteHeader(entry.StatusCode)
 		w.Write(entry.Body)
-		atomic.AddUint64(&TotalOutboundBytes, uint64(len(entry.Body)))
+		atomic.AddUint64(&h.TotalOutboundBytes, uint64(len(entry.Body)))
 	}
 }

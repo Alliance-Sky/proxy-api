@@ -13,19 +13,42 @@ import (
 	"github.com/Alliance-Sky/proxy-api/internal/db"
 	"github.com/go-chi/chi/v5"
 	"encoding/xml"
+	"sync"
+	"time"
+	"golang.org/x/sync/singleflight"
 )
 
 type Handler struct {
 	cache      *cache.Service
 	db         *db.Service
 	adminToken string
+	smogonURL  string
+
+	cachedMonthsSlice []string
+	cachedMonthsRaw   []byte
+	cachedMonthsMu    sync.RWMutex
+
+	TotalInboundBytes  uint64
+	TotalOutboundBytes uint64
+	proxyGroup         singleflight.Group
+	parseGroup         singleflight.Group
+	httpClient         *http.Client
 }
 
-func NewHandler(cache *cache.Service, db *db.Service, adminToken string) *Handler {
+func NewHandler(cache *cache.Service, db *db.Service, adminToken string, smogonURL string) *Handler {
 	return &Handler{
 		cache:      cache,
 		db:         db,
 		adminToken: adminToken,
+		smogonURL:  smogonURL,
+		httpClient: &http.Client{
+			Timeout: 35 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 100,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
 	}
 }
 
@@ -583,7 +606,7 @@ func (h *Handler) GetDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetURL := fmt.Sprintf("https://www.smogon.com/stats/%s/moveset/%s-%s.txt", month, format, rating)
+	targetURL := fmt.Sprintf("%s/%s/moveset/%s-%s.txt", h.smogonURL, month, format, rating)
 	pokemon := r.URL.Query().Get("pokemon")
 
 	h.serveProxy(w, r, targetURL, pokemon)

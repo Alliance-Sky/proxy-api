@@ -25,21 +25,20 @@ import (
 
 const statsFile = "proxy-api-stats.db"
 
-func loadStats() {
-	data, err := os.ReadFile(statsFile)
-	if err == nil {
+func loadStats(h *api.Handler) {
+	if data, err := os.ReadFile(statsFile); err == nil {
 		var stats struct {
 			InboundBytes  uint64 `json:"inboundBytes"`
 			OutboundBytes uint64 `json:"outboundBytes"`
 		}
 		if err := json.Unmarshal(data, &stats); err == nil {
-			atomic.StoreUint64(&api.TotalInboundBytes, stats.InboundBytes)
-			atomic.StoreUint64(&api.TotalOutboundBytes, stats.OutboundBytes)
+			atomic.StoreUint64(&h.TotalInboundBytes, stats.InboundBytes)
+			atomic.StoreUint64(&h.TotalOutboundBytes, stats.OutboundBytes)
 		}
 	}
 }
 
-func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
+func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup, h *api.Handler) {
 	defer wg.Done()
 	
 	var lastInbound, lastOutbound uint64
@@ -49,8 +48,8 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		select {
 		case <-ctx.Done():
-			currInbound := atomic.LoadUint64(&api.TotalInboundBytes)
-			currOutbound := atomic.LoadUint64(&api.TotalOutboundBytes)
+			currInbound := atomic.LoadUint64(&h.TotalInboundBytes)
+			currOutbound := atomic.LoadUint64(&h.TotalOutboundBytes)
 			data, _ := json.MarshalNoEscape(map[string]uint64{
 				"inboundBytes":  currInbound,
 				"outboundBytes": currOutbound,
@@ -58,8 +57,8 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
 			os.WriteFile(statsFile, data, 0644)
 			return
 		case <-ticker.C:
-			currInbound := atomic.LoadUint64(&api.TotalInboundBytes)
-			currOutbound := atomic.LoadUint64(&api.TotalOutboundBytes)
+			currInbound := atomic.LoadUint64(&h.TotalInboundBytes)
+			currOutbound := atomic.LoadUint64(&h.TotalOutboundBytes)
 
 			if currInbound != lastInbound || currOutbound != lastOutbound {
 				data, _ := json.MarshalNoEscape(map[string]uint64{
@@ -100,13 +99,8 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("Starting proxy-api...")
-	loadStats()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go saveStatsLoop(ctx, &wg)
 
 	cacheSvc, err := cache.NewService()
 	if err != nil {
@@ -118,9 +112,6 @@ func main() {
 		slog.Warn("Failed to restore cache", "error", err)
 	}
 
-	wg.Add(1)
-	go saveCacheLoop(ctx, cacheSvc, &wg)
-
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
@@ -131,6 +122,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer dbSvc.Close()
+
+	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"), "https://www.smogon.com/stats")
+
+	loadStats(h)
+	wg.Add(1)
+	go saveStatsLoop(ctx, &wg, h)
+	wg.Add(1)
+	go saveCacheLoop(ctx, cacheSvc, &wg)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -165,7 +164,6 @@ func main() {
 		})
 	})
 
-	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"))
 	h.RegisterRoutes(r)
 
 	port := os.Getenv("PORT")

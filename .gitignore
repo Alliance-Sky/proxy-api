@@ -3,6 +3,7 @@
 
 proxy-api-stats.db
 cache-backup.bin
+cache-backup.jsonl
 
 # Environment Files
 .env
