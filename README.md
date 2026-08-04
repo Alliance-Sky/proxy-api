@@ -20,13 +20,14 @@ It serves Smogon usage stats endpoints, caches queries using BigCache, stores da
 
 - Go 1.20 or higher
 - PostgreSQL running locally or via `DATABASE_URL`
-- `ADMIN_TOKEN` environment variable for securing internal endpoints (e.g. cache invalidation)
+- `ADMIN_TOKEN` environment variable for securing internal endpoints and bypassing rate limits
+- `CLOUDFLARE_HOOK_URL` environment variable for triggering frontend deployments
 
 ---
 
 ## Development and Building
 
-Compile all binaries (API server and scrapers):
+Compile all 8 binaries (API server, cache tools, and scrapers):
 
 ```bash
 make build
@@ -39,23 +40,26 @@ make run
 ```
 
 The server listens on port `9000` by default. Override it with the `PORT` environment variable.
+The cache state is automatically backed up to `cache-backup.bin` every 24 hours.
 
 ---
 
-## Data Population
+## Data Population and Utilities
 
-Build and run all 5 populator scripts to scrape and import Smogon statistics into PostgreSQL:
+Build and run all populator scripts to scrape and import Smogon statistics into PostgreSQL:
 
 ```bash
 make populate
 ```
 
-Populator binaries included:
+Included binaries:
 - `populate-usage-stats-bin`
 - `populate-format-stats-bin`
 - `populate-leads-bin`
 - `populate-metagame-bin`
 - `populate-viability-bin`
+- `preload-dbcache-bin` (Hydrates cache directly from database)
+- `warmup-bin` (Warms cache via concurrent HTTP requests)
 
 ---
 

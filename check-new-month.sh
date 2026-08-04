@@ -27,18 +27,13 @@ if [ "$CURRENT_KNOWN_MONTH" != "" ] && [ "$LATEST_SMOGON_MONTH" != "" ]; then
     ./populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
     
     # 2. Invalidate backend cache
-    curl -X POST -H "X-Admin-Token: super_secret_admin_token" http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1
+    curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1
     
     # 3. Trigger frontend SSG rebuild on Cloudflare Pages
-    if [ -f "/home/ubuntu/proxy-api/cloudflare-hook-id.txt" ]; then
-      HOOK_URL=$(cat /home/ubuntu/proxy-api/cloudflare-hook-id.txt)
-      if [ -n "$HOOK_URL" ]; then
-        curl -X POST "$HOOK_URL" >> /home/ubuntu/proxy-api/logs/deploy.log 2>&1
-      else
-        echo "Error: cloudflare-hook-id.txt is empty" >> /home/ubuntu/proxy-api/logs/deploy.log
-      fi
+    if [ -n "$CLOUDFLARE_HOOK_URL" ]; then
+      curl -X POST "$CLOUDFLARE_HOOK_URL" >> /home/ubuntu/proxy-api/logs/deploy.log 2>&1
     else
-      echo "Error: /home/ubuntu/proxy-api/cloudflare-hook-id.txt not found" >> /home/ubuntu/proxy-api/logs/deploy.log
+      echo "Error: CLOUDFLARE_HOOK_URL environment variable is not set" >> /home/ubuntu/proxy-api/logs/deploy.log
     fi
     
     echo "$(date): Sync and deployment complete for $LATEST_SMOGON_MONTH"

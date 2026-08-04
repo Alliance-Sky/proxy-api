@@ -94,14 +94,17 @@ func main() {
 	var tasks []Task
 
 	for _, month := range months {
-		var formats map[string][]string
+		var formats []struct {
+			Format  string   `json:"format"`
+			Ratings []string `json:"ratings"`
+		}
 		if err := client.getUncompressedJSON(baseURL+"/formats?month="+month, &formats); err != nil {
 			log.Printf("Failed to fetch formats for %s: %v", month, err)
 			continue
 		}
-		for format, ratings := range formats {
-			for _, rating := range ratings {
-				tasks = append(tasks, Task{Month: month, Format: format, Rating: rating})
+		for _, f := range formats {
+			for _, rating := range f.Ratings {
+				tasks = append(tasks, Task{Month: month, Format: f.Format, Rating: rating})
 			}
 		}
 	}

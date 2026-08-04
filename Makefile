@@ -9,6 +9,8 @@ build:
 	go build -o populate-leads-bin ./cmd/populate-leads
 	go build -o populate-metagame-bin ./cmd/populate-metagame
 	go build -o populate-viability-bin ./cmd/populate-viability
+	go build -o preload-dbcache-bin ./cmd/preload-dbcache
+	go build -o warmup-bin ./cmd/warmup
 
 run: build
 	./proxy-api-bin
@@ -27,3 +29,5 @@ clean:
 	rm -f populate-leads-bin
 	rm -f populate-metagame-bin
 	rm -f populate-viability-bin
+	rm -f preload-dbcache-bin
+	rm -f warmup-bin

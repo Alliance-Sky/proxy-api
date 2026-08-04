@@ -32,13 +32,13 @@ func main() {
 	}
 	
 	// We restore from file first so we don't wipe out the MovesetCache entries
-	if err := cacheSvc.RestoreFromFile("cache-backup.jsonl"); err != nil {
+	if err := cacheSvc.RestoreFromFile("cache-backup.bin"); err != nil {
 		slog.Warn("Could not restore existing cache, starting fresh", "error", err)
 	}
 
-	dsn := "user=ubuntu dbname=smogon_stats host=/var/run/postgresql"
-	if envDSN := os.Getenv("DATABASE_URL"); envDSN != "" {
-		dsn = envDSN
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
 	}
 	dbSvc, err := db.NewService(dsn)
 	if err != nil {
@@ -47,7 +47,7 @@ func main() {
 	}
 	defer dbSvc.Close()
 
-	h := api.NewHandler(cacheSvc, dbSvc)
+	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"))
 
 	months, err := dbSvc.GetMonths(ctx)
 	if err != nil {
@@ -136,8 +136,8 @@ func main() {
 		<-workerDone
 	}
 
-	slog.Info("Saving cache to cache-backup.jsonl...")
-	if err := cacheSvc.BackupToFile("cache-backup.jsonl"); err != nil {
+	slog.Info("Saving cache to cache-backup.bin...")
+	if err := cacheSvc.BackupToFile("cache-backup.bin"); err != nil {
 		slog.Error("Failed to save cache backup", "error", err)
 		os.Exit(1)
 	}

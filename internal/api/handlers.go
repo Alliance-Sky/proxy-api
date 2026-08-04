@@ -54,7 +54,7 @@ func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.cache.RestoreFromFile("cache-backup.jsonl"); err != nil {
+	if err := h.cache.RestoreFromFile("cache-backup.bin"); err != nil {
 		http.Error(w, `{"error":"Failed to restore"}`, http.StatusInternalServerError)
 		return
 	}
@@ -69,7 +69,7 @@ func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.cache.BackupToFile("cache-backup.jsonl"); err != nil {
+	if err := h.cache.BackupToFile("cache-backup.bin"); err != nil {
 		http.Error(w, `{"error":"Failed to backup"}`, http.StatusInternalServerError)
 		return
 	}

@@ -61,16 +61,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 		return
 	}
 
-	isBrowser := r.Header.Get("origin") != "" ||
-		r.Header.Get("sec-fetch-mode") != "" ||
-		r.Header.Get("sec-fetch-dest") != "" ||
-		r.Header.Get("sec-ch-ua") != "" ||
-		strings.Contains(r.Header.Get("user-agent"), "Mozilla")
 
-	if !isBrowser {
-		http.Error(w, `{"error":"Access denied: This proxy only works in a browser"}`, http.StatusForbidden)
-		return
-	}
 
 	cacheKey := targetURL
 	if pokemon != "" {

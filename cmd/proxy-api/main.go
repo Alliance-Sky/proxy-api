@@ -77,18 +77,18 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup) {
 func saveCacheLoop(ctx context.Context, cacheSvc *cache.Service, wg *sync.WaitGroup) {
 	defer wg.Done()
 	
-	ticker := time.NewTicker(7 * 24 * time.Hour)
+	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Info("Shutting down, backing up cache...")
-			cacheSvc.BackupToFile("cache-backup.jsonl")
+			cacheSvc.BackupToFile("cache-backup.bin")
 			return
 		case <-ticker.C:
 			slog.Info("Running scheduled cache backup...")
-			cacheSvc.BackupToFile("cache-backup.jsonl")
+			cacheSvc.BackupToFile("cache-backup.bin")
 		}
 	}
 }
@@ -114,14 +114,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := cacheSvc.RestoreFromFile("cache-backup.jsonl"); err != nil {
+	if err := cacheSvc.RestoreFromFile("cache-backup.bin"); err != nil {
 		slog.Warn("Failed to restore cache", "error", err)
 	}
 
 	wg.Add(1)
 	go saveCacheLoop(ctx, cacheSvc, &wg)
 
-	dsn := "user=ubuntu dbname=smogon_stats host=/var/run/postgresql"
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
+	}
 	dbSvc, err := db.NewService(dsn)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
@@ -150,11 +153,11 @@ func main() {
 
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Only bypass rate limiter for direct local connections without a forwarded IP
 			isLocalhost := strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") || strings.HasPrefix(r.RemoteAddr, "[::1]:")
 			isDirectConnection := r.Header.Get("X-Forwarded-For") == "" && r.Header.Get("X-Real-IP") == ""
 			
-			if isLocalhost && isDirectConnection {
+			adminToken := os.Getenv("ADMIN_TOKEN")
+			if (isLocalhost && isDirectConnection) || (adminToken != "" && r.Header.Get("X-Admin-Token") == adminToken) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -165,7 +168,13 @@ func main() {
 	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"))
 	h.RegisterRoutes(r)
 
-	port := ":9000"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9000"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
 	srv := &http.Server{
 		Addr:         port,
 		Handler:      r,
