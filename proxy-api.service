@@ -12,6 +12,7 @@ Restart=always
 RestartSec=5
 Environment=PORT=9000
 Environment=DATABASE_URL=postgres://ubuntu@/smogon_stats?host=/var/run/postgresql
+Environment=ADMIN_TOKEN=super_secret_admin_token
 
 [Install]
 WantedBy=multi-user.target

@@ -27,7 +27,7 @@ if [ "$CURRENT_KNOWN_MONTH" != "" ] && [ "$LATEST_SMOGON_MONTH" != "" ]; then
     ./populate-viability-bin >> /home/ubuntu/proxy-api/logs/viability.log 2>&1
     
     # 2. Invalidate backend cache
-    curl -X POST http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1
+    curl -X POST -H "X-Admin-Token: super_secret_admin_token" http://127.0.0.1:9000/_internal/invalidate-months >> /home/ubuntu/proxy-api/logs/invalidate.log 2>&1
     
     # 3. Trigger frontend SSG rebuild on Cloudflare Pages
     if [ -f "/home/ubuntu/proxy-api/cloudflare-hook-id.txt" ]; then

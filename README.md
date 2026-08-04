@@ -20,6 +20,7 @@ It serves Smogon usage stats endpoints, caches queries using BigCache, stores da
 
 - Go 1.20 or higher
 - PostgreSQL running locally or via `DATABASE_URL`
+- `ADMIN_TOKEN` environment variable for securing internal endpoints (e.g. cache invalidation)
 
 ---
 

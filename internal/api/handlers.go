@@ -16,14 +16,16 @@ import (
 )
 
 type Handler struct {
-	cache *cache.Service
-	db    *db.Service
+	cache      *cache.Service
+	db         *db.Service
+	adminToken string
 }
 
-func NewHandler(cache *cache.Service, db *db.Service) *Handler {
+func NewHandler(cache *cache.Service, db *db.Service, adminToken string) *Handler {
 	return &Handler{
-		cache: cache,
-		db:    db,
+		cache:      cache,
+		db:         db,
+		adminToken: adminToken,
 	}
 }
 
@@ -47,7 +49,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 }
 
 func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") && r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
+	if h.adminToken == "" || r.Header.Get("X-Admin-Token") != h.adminToken {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -62,7 +64,7 @@ func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") && r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
+	if h.adminToken == "" || r.Header.Get("X-Admin-Token") != h.adminToken {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -77,7 +79,7 @@ func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) InvalidateMonthsCache(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") && r.RemoteAddr != "127.0.0.1" && r.RemoteAddr != "::1" {
+	if h.adminToken == "" || r.Header.Get("X-Admin-Token") != h.adminToken {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
 	}

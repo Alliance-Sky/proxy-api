@@ -150,7 +150,11 @@ func main() {
 
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") || strings.HasPrefix(r.RemoteAddr, "[::1]:") || r.Header.Get("X-Forwarded-For") == "127.0.0.1" {
+			// Only bypass rate limiter for direct local connections without a forwarded IP
+			isLocalhost := strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") || strings.HasPrefix(r.RemoteAddr, "[::1]:")
+			isDirectConnection := r.Header.Get("X-Forwarded-For") == "" && r.Header.Get("X-Real-IP") == ""
+			
+			if isLocalhost && isDirectConnection {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -158,7 +162,7 @@ func main() {
 		})
 	})
 
-	h := api.NewHandler(cacheSvc, dbSvc)
+	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"))
 	h.RegisterRoutes(r)
 
 	port := ":9000"
