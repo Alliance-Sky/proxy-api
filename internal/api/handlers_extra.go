@@ -2,14 +2,12 @@ package api
 
 import (
 	"bytes"
-	"github.com/goccy/go-json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strconv"
 	"strings"
 )
-
-
 
 func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
@@ -18,7 +16,7 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	monthsStr := r.URL.Query().Get("months")
 
 	if format == "" || rating == "" || pokemon == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -72,7 +70,7 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 
 	trendRows, err := h.db.GetTrend(r.Context(), format, rating, pokemonList, allMonths)
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -93,13 +91,20 @@ func (h *Handler) GetTrend(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonData, _ := json.MarshalNoEscape(data)
-	compressed, _ := compressBrotliFast(jsonData)
+	jsonData, err := json.MarshalNoEscape(data)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressed, err := compressBrotliFast(jsonData)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=3600, s-maxage=3600")
 }
-
 
 func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 	month := r.URL.Query().Get("month")
@@ -107,7 +112,7 @@ func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 	rating := r.URL.Query().Get("rating")
 
 	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -132,8 +137,16 @@ func (h *Handler) GetMetagame(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jsonData, _ := json.MarshalNoEscape(resp)
-	compressed, _ := compressBrotli(jsonData)
+	jsonData, err := json.MarshalNoEscape(resp)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressed, err := compressBrotli(jsonData)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -145,7 +158,7 @@ func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
 	rating := r.URL.Query().Get("rating")
 
 	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -165,8 +178,16 @@ func (h *Handler) GetFormatStats(w http.ResponseWriter, r *http.Request) {
 		resp.TotalBattles = totalBattles
 	}
 
-	jsonData, _ := json.MarshalNoEscape(resp)
-	compressed, _ := compressBrotli(jsonData)
+	jsonData, err := json.MarshalNoEscape(resp)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressed, err := compressBrotli(jsonData)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")

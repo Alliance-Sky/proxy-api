@@ -1,11 +1,9 @@
 package api
 
 import (
-
-
 	"context"
-	"github.com/goccy/go-json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,8 +12,6 @@ import (
 
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
 )
-
-
 
 func (h *Handler) GetProxy(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL.Query().Get("url")
@@ -44,8 +40,6 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 		http.Error(w, `{"error":"Access denied: You can only proxy Smogon stats URLs."}`, http.StatusForbidden)
 		return
 	}
-
-
 
 	cacheKey := targetURL
 	if pokemon != "" {
@@ -217,7 +211,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 						Headers:    savedHeaders,
 						Body:       compressed,
 					}
-					
+
 					if !isDirectory && (isMoveset || pokemon != "") {
 						eBytes, _ := e.Marshal()
 						h.cache.MovesetCache.Set(cacheKey, eBytes)
@@ -247,7 +241,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 			}
 			return
 		}
-		
+
 		entry = v.(*cache.MovesetCacheEntry)
 	}
 

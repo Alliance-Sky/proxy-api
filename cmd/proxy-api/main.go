@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,8 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/Alliance-Sky/proxy-api/internal/api"
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
+	"github.com/Alliance-Sky/proxy-api/internal/config"
 	"github.com/Alliance-Sky/proxy-api/internal/db"
 
 	"github.com/go-chi/chi/v5"
@@ -24,6 +26,14 @@ import (
 )
 
 const statsFile = "proxy-api-stats.db"
+
+func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
+	tmpFile := filename + ".tmp"
+	if err := os.WriteFile(tmpFile, data, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpFile, filename)
+}
 
 func loadStats(h *api.Handler) {
 	if data, err := os.ReadFile(statsFile); err == nil {
@@ -40,7 +50,7 @@ func loadStats(h *api.Handler) {
 
 func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup, h *api.Handler) {
 	defer wg.Done()
-	
+
 	var lastInbound, lastOutbound uint64
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
@@ -54,7 +64,7 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup, h *api.Handler) {
 				"inboundBytes":  currInbound,
 				"outboundBytes": currOutbound,
 			})
-			os.WriteFile(statsFile, data, 0644)
+			atomicWriteFile(statsFile, data, 0644)
 			return
 		case <-ticker.C:
 			currInbound := atomic.LoadUint64(&h.TotalInboundBytes)
@@ -65,7 +75,7 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup, h *api.Handler) {
 					"inboundBytes":  currInbound,
 					"outboundBytes": currOutbound,
 				})
-				os.WriteFile(statsFile, data, 0644)
+				atomicWriteFile(statsFile, data, 0644)
 				lastInbound = currInbound
 				lastOutbound = currOutbound
 			}
@@ -75,7 +85,7 @@ func saveStatsLoop(ctx context.Context, wg *sync.WaitGroup, h *api.Handler) {
 
 func saveCacheLoop(ctx context.Context, cacheSvc *cache.Service, wg *sync.WaitGroup) {
 	defer wg.Done()
-	
+
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 
@@ -100,6 +110,11 @@ func main() {
 
 	slog.Info("Starting proxy-api...")
 	ctx, cancel := context.WithCancel(context.Background())
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
+	}
 	var wg sync.WaitGroup
 
 	cacheSvc, err := cache.NewService()
@@ -112,10 +127,7 @@ func main() {
 		slog.Warn("Failed to restore cache", "error", err)
 	}
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
-	}
+	dsn := cfg.DatabaseURL
 	dbSvc, err := db.NewService(dsn)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
@@ -123,7 +135,7 @@ func main() {
 	}
 	defer dbSvc.Close()
 
-	h := api.NewHandler(cacheSvc, dbSvc, os.Getenv("ADMIN_TOKEN"), "https://www.smogon.com/stats")
+	h := api.NewHandler(cacheSvc, dbSvc, cfg.AdminToken, cfg.SmogonURL)
 
 	loadStats(h)
 	wg.Add(1)
@@ -154,8 +166,8 @@ func main() {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			isLocalhost := strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") || strings.HasPrefix(r.RemoteAddr, "[::1]:")
 			isDirectConnection := r.Header.Get("X-Forwarded-For") == "" && r.Header.Get("X-Real-IP") == ""
-			
-			adminToken := os.Getenv("ADMIN_TOKEN")
+
+			adminToken := cfg.AdminToken
 			if (isLocalhost && isDirectConnection) || (adminToken != "" && r.Header.Get("X-Admin-Token") == adminToken) {
 				next.ServeHTTP(w, r)
 				return
@@ -166,13 +178,7 @@ func main() {
 
 	h.RegisterRoutes(r)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "9000"
-	}
-	if !strings.HasPrefix(port, ":") {
-		port = ":" + port
-	}
+	port := cfg.Port
 	srv := &http.Server{
 		Addr:         port,
 		Handler:      r,

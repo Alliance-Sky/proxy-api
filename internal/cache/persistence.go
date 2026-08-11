@@ -3,8 +3,8 @@ package cache
 import (
 	"bufio"
 	"encoding/binary"
-	"github.com/goccy/go-json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log"
 	"os"
@@ -154,7 +154,7 @@ func (s *Service) BackupToFile(filepath string) error {
 			if err != nil {
 				continue
 			}
-			
+
 			if err := writeRecord(0, record.Key(), record.Value()); err != nil {
 				continue
 			}
@@ -167,7 +167,7 @@ func (s *Service) BackupToFile(filepath string) error {
 			if err != nil {
 				continue
 			}
-			
+
 			if err := writeRecord(1, record.Key(), record.Value()); err != nil {
 				continue
 			}

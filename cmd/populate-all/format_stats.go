@@ -14,10 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Alliance-Sky/proxy-api/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-
 
 func parseTotalBattles(text string) int {
 	re := regexp.MustCompile(`(?i)Total battles:\s*(\d+)`)
@@ -35,7 +34,8 @@ func populateFormatStats() {
 
 	ctx := context.Background()
 
-	dbURL := "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
+	cfg, _ := config.Load()
+	dbURL := cfg.DatabaseURL
 	if envURL := os.Getenv("DATABASE_URL"); envURL != "" {
 		dbURL = envURL
 	}

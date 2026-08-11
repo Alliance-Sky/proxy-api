@@ -12,6 +12,7 @@ import (
 
 	"github.com/Alliance-Sky/proxy-api/internal/api"
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
+	"github.com/Alliance-Sky/proxy-api/internal/config"
 	"github.com/Alliance-Sky/proxy-api/internal/db"
 )
 
@@ -30,7 +31,7 @@ func main() {
 		slog.Error("Failed to init cache", "error", err)
 		os.Exit(1)
 	}
-	
+
 	// We restore from file first so we don't wipe out the MovesetCache entries
 	if err := cacheSvc.RestoreFromFile("cache-backup.bin"); err != nil {
 		slog.Warn("Could not restore existing cache, starting fresh", "error", err)
@@ -38,7 +39,8 @@ func main() {
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
+		cfg, _ := config.Load()
+		dsn = cfg.DatabaseURL
 	}
 	dbSvc, err := db.NewService(dsn)
 	if err != nil {

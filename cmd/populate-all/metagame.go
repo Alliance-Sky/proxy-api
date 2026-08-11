@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,10 +14,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Alliance-Sky/proxy-api/internal/config"
+	"github.com/goccy/go-json"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-
 
 type MetagameStats struct {
 	Stalliness float64
@@ -62,7 +62,8 @@ func populateMetagame() {
 
 	ctx := context.Background()
 
-	dbURL := "postgres://ubuntu@/smogon_stats?host=/var/run/postgresql"
+	cfg, _ := config.Load()
+	dbURL := cfg.DatabaseURL
 	if envURL := os.Getenv("DATABASE_URL"); envURL != "" {
 		dbURL = envURL
 	}

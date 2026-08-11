@@ -1,26 +1,70 @@
 package api
 
 import (
-
-	"github.com/goccy/go-json"
+	"context"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 
+	"encoding/xml"
 	"github.com/Alliance-Sky/proxy-api/internal/cache"
 	"github.com/Alliance-Sky/proxy-api/internal/db"
 	"github.com/go-chi/chi/v5"
-	"encoding/xml"
+	"golang.org/x/sync/singleflight"
 	"sync"
 	"time"
-	"golang.org/x/sync/singleflight"
 )
+
+var tierOrder = []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
+
+func getTierRank(f string) int {
+	clean := f
+	if len(f) > 4 && f[:3] == "gen" {
+		i := 3
+		for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+			i++
+		}
+		clean = f[i:]
+	}
+	for idx, t := range tierOrder {
+		if t == clean {
+			return idx
+		}
+	}
+	return 999
+}
+
+func getGenNum(f string) int {
+	if len(f) > 3 && f[:3] == "gen" {
+		i := 3
+		for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+			i++
+		}
+		if gen, err := strconv.Atoi(f[3:i]); err == nil {
+			return gen
+		}
+	}
+	return 0
+}
+
+type Database interface {
+	GetMonths(ctx context.Context) ([]string, error)
+	GetFormatsByMonth(ctx context.Context, month string) ([]db.FormatRating, error)
+	GetUsage(ctx context.Context, month, format, rating string) ([]db.UsageRow, error)
+	GetViability(ctx context.Context, month, format, rating string) ([]db.ViabilityRow, error)
+	GetLeads(ctx context.Context, month, format, rating string) ([]db.LeadRow, error)
+	GetAllFormatRatings(ctx context.Context) ([]db.MonthFormatRating, error)
+	GetMetagame(ctx context.Context, month, format, rating string) (db.MetagameRow, error)
+	GetFormatStats(ctx context.Context, month, format, rating string) (int, error)
+	GetTrend(ctx context.Context, format, rating string, pokemons []string, months []string) ([]db.TrendRow, error)
+}
 
 type Handler struct {
 	cache      *cache.Service
-	db         *db.Service
+	db         Database
 	adminToken string
 	smogonURL  string
 
@@ -35,10 +79,10 @@ type Handler struct {
 	httpClient         *http.Client
 }
 
-func NewHandler(cache *cache.Service, db *db.Service, adminToken string, smogonURL string) *Handler {
+func NewHandler(cache *cache.Service, database Database, adminToken string, smogonURL string) *Handler {
 	return &Handler{
 		cache:      cache,
-		db:         db,
+		db:         database,
 		adminToken: adminToken,
 		smogonURL:  smogonURL,
 		httpClient: &http.Client{
@@ -50,6 +94,12 @@ func NewHandler(cache *cache.Service, db *db.Service, adminToken string, smogonU
 			},
 		},
 	}
+}
+
+func sendJSONError(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -73,12 +123,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 
 func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
 	if h.adminToken == "" || r.Header.Get("X-Admin-Token") != h.adminToken {
-		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	if err := h.cache.RestoreFromFile("cache-backup.bin"); err != nil {
-		http.Error(w, `{"error":"Failed to restore"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Failed to restore", http.StatusInternalServerError)
 		return
 	}
 
@@ -88,12 +138,12 @@ func (h *Handler) RestoreCache(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
 	if h.adminToken == "" || r.Header.Get("X-Admin-Token") != h.adminToken {
-		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	if err := h.cache.BackupToFile("cache-backup.bin"); err != nil {
-		http.Error(w, `{"error":"Failed to backup"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Failed to backup", http.StatusInternalServerError)
 		return
 	}
 
@@ -103,7 +153,7 @@ func (h *Handler) BackupCache(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) InvalidateMonthsCache(w http.ResponseWriter, r *http.Request) {
 	if h.adminToken == "" || r.Header.Get("X-Admin-Token") != h.adminToken {
-		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -130,7 +180,7 @@ func (h *Handler) sendCached(w http.ResponseWriter, r *http.Request, data []byte
 
 	uncompressed, err := decompressBrotli(data)
 	if err != nil {
-		http.Error(w, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
@@ -146,7 +196,7 @@ func (h *Handler) GetMonths(w http.ResponseWriter, r *http.Request) {
 
 	months, err := h.db.GetMonths(r.Context())
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -162,7 +212,7 @@ func (h *Handler) GetMonths(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 	month := r.URL.Query().Get("month")
 	if month == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -174,7 +224,7 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 
 	formats, err := h.db.GetFormatsByMonth(r.Context(), month)
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -190,36 +240,6 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 		tierRank int
 	}
 	var formatItems []FormatItem
-
-	tierOrder := []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
-	getTierRank := func(f string) int {
-		clean := f
-		if len(f) > 4 && f[:3] == "gen" {
-			i := 3
-			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
-				i++
-			}
-			clean = f[i:]
-		}
-		for idx, t := range tierOrder {
-			if t == clean {
-				return idx
-			}
-		}
-		return 999
-	}
-	getGenNum := func(f string) int {
-		if len(f) > 3 && f[:3] == "gen" {
-			i := 3
-			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
-				i++
-			}
-			if gen, err := strconv.Atoi(f[3:i]); err == nil {
-				return gen
-			}
-		}
-		return 0
-	}
 
 	for format, ratings := range formatsMap {
 		sort.Slice(ratings, func(i, j int) bool {
@@ -249,13 +269,20 @@ func (h *Handler) GetFormats(w http.ResponseWriter, r *http.Request) {
 		return formatItems[i].Format < formatItems[j].Format
 	})
 
-	jsonData, _ := json.MarshalNoEscape(formatItems)
-	compressed, _ := compressBrotli(jsonData)
+	jsonData, err := json.MarshalNoEscape(formatItems)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressed, err := compressBrotli(jsonData)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
 }
-
 
 func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	month := r.URL.Query().Get("month")
@@ -263,7 +290,7 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	rating := r.URL.Query().Get("rating")
 
 	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -275,7 +302,7 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 
 	usage, err := h.db.GetUsage(r.Context(), month, format, rating)
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -294,8 +321,16 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonData, _ := json.MarshalNoEscape(data)
-	compressed, _ := compressBrotli(jsonData)
+	jsonData, err := json.MarshalNoEscape(data)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressed, err := compressBrotli(jsonData)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressed)
 
 	h.sendCached(w, r, compressed, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -307,7 +342,7 @@ func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
 	rating := r.URL.Query().Get("rating")
 
 	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -319,7 +354,7 @@ func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
 
 	usage, err := h.db.GetUsage(r.Context(), month, format, rating)
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -350,7 +385,7 @@ func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			leadPct = "0.00000%"
 		}
-		
+
 		viab := viabilityMap[u.Pokemon]
 
 		dataAgg = append(dataAgg, AggregatedStatsResponse{
@@ -362,8 +397,16 @@ func (h *Handler) GetAggregatedStats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonDataAgg, _ := json.MarshalNoEscape(dataAgg)
-	compressedAgg, _ := compressBrotli(jsonDataAgg)
+	jsonDataAgg, err := json.MarshalNoEscape(dataAgg)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressedAgg, err := compressBrotli(jsonDataAgg)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
 	h.sendCached(w, r, compressedAgg, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -375,7 +418,7 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 	rating := r.URL.Query().Get("rating")
 
 	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -387,7 +430,7 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 
 	usage, err := h.db.GetUsage(r.Context(), month, format, rating)
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -410,7 +453,7 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 		if !exists {
 			leadPct = 0.0
 		}
-		
+
 		viab := viabilityMap[u.Pokemon]
 
 		dataAgg = append(dataAgg, []interface{}{
@@ -422,8 +465,16 @@ func (h *Handler) GetAggregatedStatsTuple(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	jsonDataAgg, _ := json.MarshalNoEscape(dataAgg)
-	compressedAgg, _ := compressBrotli(jsonDataAgg)
+	jsonDataAgg, err := json.MarshalNoEscape(dataAgg)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressedAgg, err := compressBrotli(jsonDataAgg)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
 	h.sendCached(w, r, compressedAgg, "public, max-age=2592000, s-maxage=2592000, immutable")
@@ -438,7 +489,7 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 
 	months, err := h.db.GetMonths(r.Context())
 	if err != nil || len(months) == 0 {
-		http.Error(w, `{"error":"Database error or no months"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error or no months", http.StatusInternalServerError)
 		return
 	}
 	latestMonth := months[0]
@@ -448,7 +499,7 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 	for _, f := range formatsData {
 		formatsMap[f.Format] = append(formatsMap[f.Format], f.Rating)
 	}
-	
+
 	type FormatItem struct {
 		Format   string   `json:"format"`
 		Ratings  []string `json:"ratings"`
@@ -456,36 +507,6 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 		tierRank int
 	}
 	var formatItems []FormatItem
-
-	tierOrder := []string{"ou", "ubers", "uu", "ru", "nu", "pu", "lc", "monotype", "doublesou", "randombattle"}
-	getTierRank := func(f string) int {
-		clean := f
-		if len(f) > 4 && f[:3] == "gen" {
-			i := 3
-			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
-				i++
-			}
-			clean = f[i:]
-		}
-		for idx, t := range tierOrder {
-			if t == clean {
-				return idx
-			}
-		}
-		return 999
-	}
-	getGenNum := func(f string) int {
-		if len(f) > 3 && f[:3] == "gen" {
-			i := 3
-			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
-				i++
-			}
-			if gen, err := strconv.Atoi(f[3:i]); err == nil {
-				return gen
-			}
-		}
-		return 0
-	}
 
 	for format, ratings := range formatsMap {
 		sort.Slice(ratings, func(i, j int) bool {
@@ -589,8 +610,16 @@ func (h *Handler) GetInit(w http.ResponseWriter, r *http.Request) {
 		"totalBattles":  initTotalBattles,
 	}
 
-	jsonDataAgg, _ := json.MarshalNoEscape(resp)
-	compressedAgg, _ := compressBrotliFast(jsonDataAgg)
+	jsonDataAgg, err := json.MarshalNoEscape(resp)
+	if err != nil {
+		sendJSONError(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+	compressedAgg, err := compressBrotliFast(jsonDataAgg)
+	if err != nil {
+		sendJSONError(w, "Failed to compress response", http.StatusInternalServerError)
+		return
+	}
 	h.cache.DBCache.Set(cacheKey, compressedAgg)
 
 	h.sendCached(w, r, compressedAgg, "public, max-age=3600, s-maxage=3600")
@@ -602,7 +631,7 @@ func (h *Handler) GetDetails(w http.ResponseWriter, r *http.Request) {
 	rating := r.URL.Query().Get("rating")
 
 	if month == "" || format == "" || rating == "" {
-		http.Error(w, `{"error":"Missing parameters"}`, http.StatusBadRequest)
+		sendJSONError(w, "Missing parameters", http.StatusBadRequest)
 		return
 	}
 
@@ -623,7 +652,7 @@ func (h *Handler) GetSitemap(w http.ResponseWriter, r *http.Request) {
 
 	combinations, err := h.db.GetAllFormatRatings(r.Context())
 	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -655,14 +684,14 @@ func (h *Handler) GetSitemap(w http.ResponseWriter, r *http.Request) {
 
 	xmlData, err := xml.MarshalIndent(urlSet, "", "  ")
 	if err != nil {
-		http.Error(w, `{"error":"Failed to generate xml"}`, http.StatusInternalServerError)
+		sendJSONError(w, "Failed to generate xml", http.StatusInternalServerError)
 		return
 	}
 
 	finalXML := append([]byte(xml.Header), xmlData...)
-	
+
 	h.cache.DBCache.Set(cacheKey, finalXML)
-	
+
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400")
 	w.Write(finalXML)

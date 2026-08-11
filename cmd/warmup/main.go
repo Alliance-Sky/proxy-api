@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/goccy/go-json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log"
 	"net/http"
@@ -134,7 +134,6 @@ func main() {
 						log.Printf("Error fetching %s: %v", url, err)
 					}
 				}
-				
 
 				// Request the moveset file to precache it as well, but ONLY for recent years (2025, 2026)
 				if strings.HasPrefix(t.Month, "2026") || strings.HasPrefix(t.Month, "2025") {
