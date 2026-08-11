@@ -50,7 +50,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 
 	if cachedBytes, err := h.cache.MovesetCache.Get(cacheKey); err == nil {
 		var e cache.MovesetCacheEntry
-		if err := e.Unmarshal(cachedBytes); err == nil {
+		if _, err := e.UnmarshalMsg(cachedBytes); err == nil {
 			entry = &e
 		}
 	}
@@ -63,7 +63,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 			if pokemon != "" && isMoveset {
 				if fullCachedBytes, err := h.cache.MovesetCache.Get(targetURL); err == nil {
 					var fullEntry cache.MovesetCacheEntry
-					if err := fullEntry.Unmarshal(fullCachedBytes); err == nil {
+					if _, err := fullEntry.UnmarshalMsg(fullCachedBytes); err == nil {
 						vMap, parseErr, _ := h.parseGroup.Do(targetURL, func() (interface{}, error) {
 							uncompressed, err := decompressBrotli(fullEntry.Body)
 							if err != nil {
@@ -87,7 +87,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 										Headers:    fullEntry.Headers,
 										Body:       pokeCompressed,
 									}
-									eBytes, _ := e.Marshal()
+									eBytes, _ := e.MarshalMsg(nil)
 									h.cache.MovesetCache.Set(cacheKey, eBytes)
 									return &e, nil
 								}
@@ -161,7 +161,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 							Headers:    hdrsCopy,
 							Body:       fullCompressed,
 						}
-						eBytes, _ := e.Marshal()
+						eBytes, _ := e.MarshalMsg(nil)
 						h.cache.MovesetCache.Set(targetURL, eBytes)
 					}
 				}
@@ -187,7 +187,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 								Headers:    hdrs,
 								Body:       pComp,
 							}
-							cEntryBytes, _ := cEntry.Marshal()
+							cEntryBytes, _ := cEntry.MarshalMsg(nil)
 							h.cache.MovesetCache.Set(tURL+"|pokemon:"+pokeName, cEntryBytes)
 						}
 					}(fullMap, targetURL, resp.StatusCode, hdrsCopy)
@@ -213,7 +213,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, targetURL, 
 					}
 
 					if !isDirectory && (isMoveset || pokemon != "") {
-						eBytes, _ := e.Marshal()
+						eBytes, _ := e.MarshalMsg(nil)
 						h.cache.MovesetCache.Set(cacheKey, eBytes)
 					}
 					return &e, nil

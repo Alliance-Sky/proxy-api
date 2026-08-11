@@ -3,58 +3,18 @@ package cache
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log"
 	"os"
 )
 
+//go:generate msgp
 type MovesetCacheEntry struct {
-	StatusCode int
-	Headers    map[string]string
-	Body       []byte
+	StatusCode int               `msg:"status_code"`
+	Headers    map[string]string `msg:"headers"`
+	Body       []byte            `msg:"body"`
 }
 
-func (e *MovesetCacheEntry) Marshal() ([]byte, error) {
-	headerBytes, err := json.MarshalNoEscape(e.Headers)
-	if err != nil {
-		return nil, err
-	}
-
-	headerLen := uint32(len(headerBytes))
-	buf := make([]byte, 8+headerLen+uint32(len(e.Body)))
-
-	binary.LittleEndian.PutUint32(buf[0:4], uint32(e.StatusCode))
-	binary.LittleEndian.PutUint32(buf[4:8], headerLen)
-	copy(buf[8:], headerBytes)
-	copy(buf[8+headerLen:], e.Body)
-
-	return buf, nil
-}
-
-func (e *MovesetCacheEntry) Unmarshal(data []byte) error {
-	if len(data) < 8 {
-		return errors.New("data too short")
-	}
-
-	e.StatusCode = int(binary.LittleEndian.Uint32(data[0:4]))
-	headerLen := binary.LittleEndian.Uint32(data[4:8])
-
-	if uint32(len(data)) < 8+headerLen {
-		return errors.New("invalid header length")
-	}
-
-	e.Headers = make(map[string]string)
-	if headerLen > 0 {
-		if err := json.Unmarshal(data[8:8+headerLen], &e.Headers); err != nil {
-			return err
-		}
-	}
-
-	e.Body = data[8+headerLen:]
-	return nil
-}
 
 func (s *Service) RestoreFromFile(filepath string) error {
 	file, err := os.Open(filepath)
