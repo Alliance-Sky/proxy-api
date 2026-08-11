@@ -10,11 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/molecule-man/go-brrr"
 )
 
-const baseURL = "http://127.0.0.1:9000/api"
+const baseURL = "http://127.0.0.1:9000/api/v3"
 const concurrency = 50
 
 type Client struct {
@@ -71,8 +69,7 @@ func (c *Client) getUncompressedJSON(url string, target interface{}) error {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	reader := brrr.NewReader(resp.Body)
-	return json.NewDecoder(reader).Decode(target)
+	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 func main() {
