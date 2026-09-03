@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -132,14 +131,15 @@ func populateFormatStats() {
 
 		txtFiles := []string{}
 		for _, f := range parseLinks(monthHTML) {
-			if strings.HasSuffix(f, ".txt") {
+			if strings.HasSuffix(f, ".txt") || strings.HasSuffix(f, ".txt.gz") {
 				txtFiles = append(txtFiles, f)
 			}
 		}
 
 		formatRatings := make(map[string][]string)
+		filenameMap := make(map[string]string)
 		for _, file := range txtFiles {
-			nameWithoutExt := strings.TrimSuffix(file, ".txt")
+			nameWithoutExt := strings.TrimSuffix(strings.TrimSuffix(file, ".gz"), ".txt")
 			lastDash := strings.LastIndex(nameWithoutExt, "-")
 			if lastDash == -1 {
 				continue
@@ -147,6 +147,7 @@ func populateFormatStats() {
 			format := nameWithoutExt[:lastDash]
 			rating := nameWithoutExt[lastDash+1:]
 			formatRatings[format] = append(formatRatings[format], rating)
+			filenameMap[format+"-"+rating] = file
 		}
 
 		var targetFiles []string
@@ -160,7 +161,7 @@ func populateFormatStats() {
 				ratings = ratings[len(ratings)-2:]
 			}
 			for _, rating := range ratings {
-				targetFiles = append(targetFiles, fmt.Sprintf("%s-%s.txt", format, rating))
+				targetFiles = append(targetFiles, filenameMap[format+"-"+rating])
 			}
 		}
 
@@ -184,7 +185,7 @@ func populateFormatStats() {
 				wg.Add(1)
 				go func(file string) {
 					defer wg.Done()
-					nameWithoutExt := strings.TrimSuffix(file, ".txt")
+					nameWithoutExt := strings.TrimSuffix(strings.TrimSuffix(file, ".gz"), ".txt")
 					lastDash := strings.LastIndex(nameWithoutExt, "-")
 					if lastDash == -1 {
 						return
@@ -207,20 +208,13 @@ func populateFormatStats() {
 					var text string
 					var fetchErr error
 					for retries := 3; retries > 0; retries-- {
-						req, _ := http.NewRequestWithContext(ctx, "GET", targetUrl, nil)
-						resp, err := client.Do(req)
-						if err == nil && resp.StatusCode == 200 {
-							b, e := io.ReadAll(resp.Body)
-							resp.Body.Close()
-							if e == nil {
-								text = string(b)
-								fetchErr = nil
-								break
-							}
-						} else if resp != nil {
-							resp.Body.Close()
+						b, err := fetchFileContent(ctx, client, targetUrl)
+						if err == nil {
+							text = string(b)
+							fetchErr = nil
+							break
 						}
-						fetchErr = fmt.Errorf("failed fetch")
+						fetchErr = err
 						time.Sleep(1 * time.Second)
 					}
 

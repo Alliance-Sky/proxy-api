@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -108,14 +107,14 @@ func populateViability() {
 
 		chaosFiles := []string{}
 		for _, f := range parseLinks(chaosHTML) {
-			if strings.HasSuffix(f, ".json") {
+			if strings.HasSuffix(f, ".json") || strings.HasSuffix(f, ".json.gz") {
 				chaosFiles = append(chaosFiles, f)
 			}
 		}
 
 		formatRatings := make(map[string][]string)
 		for _, file := range chaosFiles {
-			nameWithoutExt := strings.TrimSuffix(file, ".json")
+			nameWithoutExt := strings.TrimSuffix(strings.TrimSuffix(file, ".gz"), ".json")
 			lastDash := strings.LastIndex(nameWithoutExt, "-")
 			if lastDash == -1 {
 				continue
@@ -155,7 +154,7 @@ func populateViability() {
 				wg.Add(1)
 				go func(file string) {
 					defer wg.Done()
-					nameWithoutExt := strings.TrimSuffix(file, ".json")
+					nameWithoutExt := strings.TrimSuffix(strings.TrimSuffix(file, ".gz"), ".json")
 					lastDash := strings.LastIndex(nameWithoutExt, "-")
 					if lastDash == -1 {
 						return
@@ -176,18 +175,11 @@ func populateViability() {
 					targetUrl := BaseURL + month + "/chaos/" + file
 
 					var jsonBytes []byte
-					var fetchErr error
-					for retries := 3; retries > 0; retries-- {
-						req, _ := http.NewRequestWithContext(ctx, "GET", targetUrl, nil)
-						resp, err := client.Do(req)
-						if err == nil && resp.StatusCode == 200 {
-							jsonBytes, fetchErr = io.ReadAll(resp.Body)
-							resp.Body.Close()
-							if fetchErr == nil {
-								break
-							}
-						} else if resp != nil {
-							resp.Body.Close()
+										for retries := 3; retries > 0; retries-- {
+						b, err := fetchFileContent(ctx, client, targetUrl)
+						if err == nil {
+							jsonBytes = b
+							break
 						}
 						time.Sleep(1 * time.Second)
 					}
