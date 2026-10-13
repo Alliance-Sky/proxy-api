@@ -125,7 +125,7 @@ func populateMetagame() {
 		matches := monthRegex.FindStringSubmatch(m)
 		if len(matches) > 1 {
 			year, _ := strconv.Atoi(matches[1])
-			if year >= 2014 && year <= 2026 {
+			if year >= 2014 {
 				months = append(months, m)
 			}
 		}

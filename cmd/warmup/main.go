@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,6 +82,11 @@ func main() {
 	}
 	log.Printf("Found %d months", len(months))
 
+	recentMonths := make(map[string]bool)
+	for i := 0; i < len(months) && i < 12; i++ {
+		recentMonths[months[i]] = true
+	}
+
 	type Task struct {
 		Month  string
 		Format string
@@ -132,8 +136,8 @@ func main() {
 					}
 				}
 
-				// Request the moveset file to precache it as well, but ONLY for the latest year (2026)
-				if strings.HasPrefix(t.Month, "2026") {
+				// Request the moveset file to precache it as well, for the latest 12 months
+				if recentMonths[t.Month] {
 					movesetURL := fmt.Sprintf("http://127.0.0.1:9000/?url=https://www.smogon.com/stats/%s/moveset/%s-%s.txt", t.Month, t.Format, t.Rating)
 					err := client.getJSON(movesetURL, nil)
 					if err != nil {
