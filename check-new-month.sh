@@ -7,6 +7,10 @@ set -eo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 mkdir -p "$PROJECT_DIR/logs"
 
+# Ensure full PATH for cron/non-interactive environments
+export PATH="/home/ubuntu/.nvm/versions/node/v26.5.0/bin:/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export HOME="/home/ubuntu"
+
 # Source environment variables if .env exists
 if [ -f "$PROJECT_DIR/.env" ]; then
   set -a
